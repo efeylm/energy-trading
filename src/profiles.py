@@ -211,6 +211,6 @@ class ProfileManager:
                 f"  Agent {i} ({agent_type}): "
                 f"PV={total_pv:.1f}kWh, Load={total_load:.1f}kWh, "
                 f"Net={total_pv - total_load:.1f}kWh, "
-                f"Battery₀={init_bat:.1f}kWh"
+                f"Battery0={init_bat:.1f}kWh"
             )
         return "\n".join(lines)
