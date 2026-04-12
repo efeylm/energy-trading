@@ -84,7 +84,8 @@ class SimConfig:
     ))
     
     # --- Battery storage heuristic thresholds ---
-    battery_store_threshold: float = 0.5  # If battery SoC < this fraction, prefer storing
+    # AI-generated: lower threshold so agents sell sooner instead of over-storing.
+    battery_store_threshold: float = 0.35  # If battery SoC < this fraction, prefer storing
     
     # --- Random seed for reproducibility ---
     seed: int = 42

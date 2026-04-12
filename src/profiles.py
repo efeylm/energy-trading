@@ -164,12 +164,35 @@ class ProfileManager:
         for i in range(self.n_agents):
             # PV generation: only prosumers have PV panels
             if i < self.n_prosumers:
-                self.pv_profiles[i] = generate_pv_profile(i, rng=self.rng)
+                # AI-generated: calibrated PV peak for healthier P2P liquidity.
+                # Keeps scarcity but enables regular sell-side availability at midday.
+                self.pv_profiles[i] = generate_pv_profile(
+                    i,
+                    peak_kw=9.0,
+                    noise_std=0.25,
+                    rng=self.rng,
+                )
             else:
                 self.pv_profiles[i] = np.zeros(24)  # Consumers have no PV
             
-            # Load demand: all agents have load
-            self.load_profiles[i] = generate_load_profile(i, rng=self.rng)
+            # AI-generated: differentiated demand profiles to avoid extreme deficit regime.
+            # Prosumers keep moderate load, consumers remain demand-heavy.
+            if i < self.n_prosumers:
+                self.load_profiles[i] = generate_load_profile(
+                    i,
+                    base_kw=1.6,
+                    peak_kw=4.8,
+                    noise_std=0.3,
+                    rng=self.rng,
+                )
+            else:
+                self.load_profiles[i] = generate_load_profile(
+                    i,
+                    base_kw=2.0,
+                    peak_kw=5.8,
+                    noise_std=0.35,
+                    rng=self.rng,
+                )
             
             # Initial battery energy
             self.initial_battery[i] = generate_initial_battery_energy(
