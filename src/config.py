@@ -87,6 +87,14 @@ class SimConfig:
     # AI-generated: lower threshold so agents sell sooner instead of over-storing.
     battery_store_threshold: float = 0.35  # If battery SoC < this fraction, prefer storing
     
+    # --- Iterative Double Auction parameters ---
+    # Pseudocode Step 6: "Tüm agent'lar mb curvelerinin yüzde x altından ilk tekliflerini verirler"
+    initial_shout_margin: float = 0.15   # Buyers start at MB*(1-margin), sellers at MC*(1+margin)
+    # "agentlar satış fiyatını alfa değerine göre değiştirir (en iyi alış/satışın tam ortası)"
+    alpha: float = 0.5                   # Offer convergence speed per round (0=static, 1=jump to midpoint)
+    max_auction_rounds: int = 50         # Maximum bidding rounds per hour before market closes
+    unit_size: float = 0.5              # kWh per discrete tradeable unit
+
     # --- Random seed for reproducibility ---
     seed: int = 42
 

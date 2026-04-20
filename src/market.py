@@ -1,20 +1,20 @@
 """
-Double Auction Market with Batch Clearing.
+Double Auction Market implementations.
 
-Implements Algorithm 1 from Qiu et al. (IJCAI-21):
-1. Collect all buy/sell orders for the auction period
-2. Sort buy orders by price (descending) and sell orders by price (ascending)
-3. Match orders while best_bid >= best_ask:
-   - Trade quantity = min(q_buy, q_sell)
-   - Trade price = (p_buy + p_sell) / 2  (mid-pricing)
-4. Unmatched orders remain (no grid fallback)
-
-In our closed market (no grid), unmatched energy is curtailed.
+DoubleAuctionMarket  — Batch clearing (Algorithm 1, Qiu et al. IJCAI-21).
+IterativeDoubleAuction — Price-discovery auction (ADD Bitirme pseudocode Step 6):
+    1. All agents shout initial offers X% away from their MB/MC curves.
+    2. If best_bid >= best_ask → trade at midpoint.
+    3. Unmatched agents converge toward midpoint via alpha parameter.
+    4. Repeat until no more trades or convergence.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, TYPE_CHECKING
 import copy
+
+if TYPE_CHECKING:
+    from src.agent import EnergyAgent
 
 
 @dataclass
@@ -235,3 +235,173 @@ class DoubleAuctionMarket:
             if t.seller_id == agent_id:
                 net -= t.price * t.quantity   # Receives
         return net
+
+
+class IterativeDoubleAuction:
+    """Price-discovery double auction (ADD Bitirme pseudocode Step 6).
+
+    Each auction period proceeds in rounds:
+      Round start : All agents hold a current offer (bid or ask).
+      Match check : If best_bid >= best_ask → trade at midpoint, record Trade.
+      Convergence : Otherwise every unmatched agent moves their offer toward
+                    midpoint by alpha factor (buyer up, seller down), clamped
+                    to their own MB/MC so they never trade at a loss.
+      Termination : No new trade for 10 consecutive rounds, or max_rounds hit.
+
+    Agents must call setup_auction() before each period so their auction state
+    (_auction_role, _auction_units_to_trade, etc.) is initialised.
+    """
+
+    def __init__(self):
+        self.trade_history: List[List[Trade]] = []
+        self.clearing_results: List[ClearingResult] = []
+
+    # ------------------------------------------------------------------ #
+    # Public API                                                           #
+    # ------------------------------------------------------------------ #
+
+    def run_period(
+        self,
+        buyers: List,       # EnergyAgent instances with _auction_role == 'buyer'
+        sellers: List,      # EnergyAgent instances with _auction_role == 'seller'
+        margin: float,      # config.initial_shout_margin
+        alpha: float,       # config.alpha
+        unit_size: float,   # config.unit_size
+        max_rounds: int,    # config.max_auction_rounds
+        verbose: bool = False,
+    ) -> ClearingResult:
+        """Run one hourly iterative auction. Returns a ClearingResult."""
+        result = ClearingResult()
+
+        if not buyers or not sellers:
+            self._finalize(result)
+            return result
+
+        # Step 1 — Initialize all offers (X% from MB/MC)
+        for b in buyers:
+            b.auction_initial_offer(margin)
+        for s in sellers:
+            s.auction_initial_offer(margin)
+
+        no_trade_streak = 0
+
+        for rnd in range(max_rounds):
+            # Gather active participants
+            active_b = [
+                b for b in buyers
+                if b.auction_units_remaining() > 0 and b._auction_current_offer is not None
+            ]
+            active_s = [
+                s for s in sellers
+                if s.auction_units_remaining() > 0 and s._auction_current_offer is not None
+            ]
+
+            if not active_b or not active_s:
+                break
+
+            best_buyer = max(active_b, key=lambda b: b._auction_current_offer)
+            best_seller = min(active_s, key=lambda s: s._auction_current_offer)
+
+            best_bid = best_buyer._auction_current_offer
+            best_ask = best_seller._auction_current_offer
+
+            if best_bid >= best_ask:
+                # Step 2 — Match → trade at midpoint
+                price = round((best_bid + best_ask) / 2.0, 6)
+                trade = Trade(
+                    buyer_id=best_buyer.agent_id,
+                    seller_id=best_seller.agent_id,
+                    price=price,
+                    quantity=unit_size,
+                    buyer_bid=best_bid,
+                    seller_ask=best_ask,
+                )
+                result.trades.append(trade)
+
+                best_buyer.auction_record_trade()
+                best_seller.auction_record_trade()
+
+                # Initialise offers for the next unit
+                best_buyer.auction_initial_offer(margin)
+                best_seller.auction_initial_offer(margin)
+
+                no_trade_streak = 0
+
+                if verbose:
+                    print(
+                        f"    [r{rnd+1:02d}] TRADE "
+                        f"A{best_buyer.agent_id}(bid={best_bid:.4f}) ↔ "
+                        f"A{best_seller.agent_id}(ask={best_ask:.4f}) "
+                        f"@ ${price:.4f}/kWh"
+                    )
+
+            else:
+                # Step 3 — No match: converge toward midpoint
+                no_trade_streak += 1
+                if no_trade_streak >= 10:
+                    if verbose:
+                        print(
+                            f"    [r{rnd+1:02d}] Converged "
+                            f"(best_bid={best_bid:.4f}, best_ask={best_ask:.4f}, "
+                            f"streak={no_trade_streak})"
+                        )
+                    break
+
+                for b in active_b:
+                    b.auction_update_offer(best_bid, best_ask, alpha)
+                for s in active_s:
+                    s.auction_update_offer(best_bid, best_ask, alpha)
+
+        # Record unmatched orders for settlement reference
+        for b in buyers:
+            remaining = b.auction_units_remaining()
+            if remaining > 0:
+                result.unmatched_buy_orders.append(Order(
+                    agent_id=b.agent_id,
+                    price=b._auction_current_offer or 0.0,
+                    quantity=remaining * unit_size,
+                    is_buy=True,
+                ))
+        for s in sellers:
+            remaining = s.auction_units_remaining()
+            if remaining > 0:
+                result.unmatched_sell_orders.append(Order(
+                    agent_id=s.agent_id,
+                    price=s._auction_current_offer or 0.0,
+                    quantity=remaining * unit_size,
+                    is_buy=False,
+                ))
+
+        self._finalize(result)
+        return result
+
+    def get_agent_trades(self, agent_id: int, period: int = -1) -> List[Trade]:
+        if not self.trade_history:
+            return []
+        return [
+            t for t in self.trade_history[period]
+            if t.buyer_id == agent_id or t.seller_id == agent_id
+        ]
+
+    def get_market_info(self) -> dict:
+        """Public market info consumed by agent observations between hours."""
+        last_avg_price = 0.0
+        last_volume = 0.0
+        if self.clearing_results:
+            last = self.clearing_results[-1]
+            last_avg_price = last.average_price
+            last_volume = last.total_traded_kwh
+        return {
+            "best_bid": 0.0,        # Dynamic during auction; 0 between hours
+            "best_ask": 0.0,
+            "last_avg_price": last_avg_price,
+            "last_volume": last_volume,
+            "n_periods_completed": len(self.clearing_results),
+        }
+
+    # ------------------------------------------------------------------ #
+
+    def _finalize(self, result: ClearingResult):
+        result.compute_stats()
+        self.trade_history.append(result.trades)
+        self.clearing_results.append(result)

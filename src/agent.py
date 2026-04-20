@@ -81,6 +81,15 @@ class EnergyAgent:
         self.curtailed_energy = 0.0     # Cumulative curtailed surplus (kWh)
         self.starvation_count = 0       # Number of starvation events
         self.hourly_log = []            # Detailed per-hour records
+
+        # --- Iterative auction state (reset each hour via setup_auction) ---
+        # Pseudocode Steps 4–6: role/quantity/price determined per-hour
+        self._auction_role: Optional[str] = None   # 'buyer' | 'seller'
+        self._auction_unit_size: float = 0.5
+        self._auction_total_qty: float = 0.0
+        self._auction_units_to_trade: int = 0
+        self._auction_units_traded: int = 0
+        self._auction_current_offer: Optional[float] = None
     
     def compute_mb(self, quantity: float) -> float:
         """Marginal Benefit: MB(q) = alpha * exp(-beta * q)
@@ -256,6 +265,85 @@ class EnergyAgent:
             "battery_soc": self.battery.soc_fraction,
         })
     
+    # ------------------------------------------------------------------ #
+    # Iterative Double Auction — Pseudocode Steps 4–6                    #
+    # ------------------------------------------------------------------ #
+
+    def setup_auction(self, role: str, market_quantity: float, unit_size: float) -> int:
+        """Prepare agent for an iterative auction period.
+
+        Called once per hour after battery decision and role determination.
+        Returns the number of discrete units this agent will try to trade.
+        """
+        self._auction_role = role
+        self._auction_unit_size = unit_size
+        self._auction_total_qty = abs(market_quantity)
+        self._auction_units_to_trade = max(1, math.ceil(self._auction_total_qty / unit_size))
+        self._auction_units_traded = 0
+        self._auction_current_offer = None
+        return self._auction_units_to_trade
+
+    def auction_valuation(self) -> Optional[float]:
+        """MB (buyer) or MC (seller) for the *next* unit to be traded.
+
+        Pseudocode Step 5: MB/MC curves evaluated at cumulative quantity already traded.
+        Returns None when all units have been matched.
+        """
+        if self._auction_units_traded >= self._auction_units_to_trade:
+            return None
+        q = self._auction_units_traded * self._auction_unit_size
+        if self._auction_role == 'buyer':
+            return self.compute_mb(q)
+        return self.compute_mc(q)
+
+    def auction_initial_offer(self, margin: float) -> Optional[float]:
+        """Set and return initial bid/ask at X% discount/premium from valuation.
+
+        Pseudocode Step 6: "mb curvelerinin yüzde x altından ilk tekliflerini verirler".
+        Buyers shout  MB * (1 - margin).
+        Sellers shout MC * (1 + margin).
+        """
+        v = self.auction_valuation()
+        if v is None:
+            self._auction_current_offer = None
+            return None
+        if self._auction_role == 'buyer':
+            self._auction_current_offer = v * (1.0 - margin)
+        else:
+            self._auction_current_offer = v * (1.0 + margin)
+        return self._auction_current_offer
+
+    def auction_update_offer(self, best_bid: float, best_ask: float, alpha: float):
+        """Converge current offer toward midpoint, clamped to own valuation.
+
+        Pseudocode Step 6: "alfa değerine göre değiştirir (tam ortası)".
+        Buyer  moves bid  UP:   new = current + alpha * (midpoint - current), capped at MB.
+        Seller moves ask DOWN:  new = current - alpha * (current - midpoint), floored at MC.
+        """
+        if self._auction_current_offer is None:
+            return
+        v = self.auction_valuation()
+        if v is None:
+            return
+        midpoint = (best_bid + best_ask) / 2.0
+        if self._auction_role == 'buyer':
+            new = self._auction_current_offer + alpha * (midpoint - self._auction_current_offer)
+            self._auction_current_offer = min(v, max(self._auction_current_offer, new))
+        else:
+            new = self._auction_current_offer - alpha * (self._auction_current_offer - midpoint)
+            self._auction_current_offer = max(v, min(self._auction_current_offer, new))
+
+    def auction_record_trade(self):
+        """Mark one unit as traded and reset offer so next unit starts fresh."""
+        self._auction_units_traded += 1
+        self._auction_current_offer = None
+
+    def auction_units_remaining(self) -> int:
+        """How many units this agent still wants to trade this hour."""
+        return max(0, self._auction_units_to_trade - self._auction_units_traded)
+
+    # ------------------------------------------------------------------ #
+
     def get_reward(self, hour: int) -> float:
         """Get the reward for the last time step.
         

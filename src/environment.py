@@ -26,7 +26,7 @@ import numpy as np
 from src.config import SimConfig
 from src.battery import Battery
 from src.agent import EnergyAgent, Observation, Action
-from src.market import DoubleAuctionMarket, Order, ClearingResult
+from src.market import DoubleAuctionMarket, IterativeDoubleAuction, Order, ClearingResult
 from src.profiles import ProfileManager
 from src.metrics import MetricsCollector, HourlyMetrics
 
@@ -40,7 +40,7 @@ class EnergyTradingEnv:
     
     def __init__(self, config: SimConfig):
         self.config = config
-        self.market = DoubleAuctionMarket()
+        self.market = IterativeDoubleAuction()   # Pseudocode Step 6 iterative auction
         self.metrics = MetricsCollector(config.n_agents)
         self.profiles: Optional[ProfileManager] = None
         self.agents: List[EnergyAgent] = []
@@ -96,8 +96,8 @@ class EnergyTradingEnv:
             )
             self.agents.append(agent)
         
-        # Reset market and metrics
-        self.market.reset()
+        # Reset market and metrics (IterativeDoubleAuction keeps history; create fresh)
+        self.market = IterativeDoubleAuction()
         self.metrics = MetricsCollector(self.config.n_agents)
         self.current_hour = 0
         
@@ -109,7 +109,7 @@ class EnergyTradingEnv:
     
     def _get_all_observations(self) -> Dict[int, Observation]:
         """Generate observations for all agents at current hour."""
-        market_info = self.market.get_market_info()
+        market_info = self.market.get_market_info()  # works for both market types
         observations = {}
         
         for agent in self.agents:
@@ -165,21 +165,37 @@ class EnergyTradingEnv:
         for agent in self.agents:
             action = actions[agent.agent_id]
             agent.apply_battery_action(action.battery_charge, dt)
-        
-        # --- Step 4: Submit orders to market ---
+
+        # --- Step 4: Prepare iterative auction (Pseudocode Steps 4–5) ---
+        # Each agent with a non-zero market order initialises its auction state:
+        # role, number of units, and MB/MC curve offset for price discovery.
         n_buyers = 0
         n_sellers = 0
+        auction_buyers: List[EnergyAgent] = []
+        auction_sellers: List[EnergyAgent] = []
+
         for agent in self.agents:
             action = actions[agent.agent_id]
-            if action.order is not None:
-                self.market.submit_order(action.order)
+            if action.order is not None and action.order.quantity > 1e-6:
+                role = 'buyer' if action.order.is_buy else 'seller'
+                agent.setup_auction(role, action.order.quantity, self.config.unit_size)
                 if action.order.is_buy:
+                    auction_buyers.append(agent)
                     n_buyers += 1
                 else:
+                    auction_sellers.append(agent)
                     n_sellers += 1
-        
-        # --- Step 5: Batch clearing ---
-        clearing_result = self.market.clear()
+
+        # --- Step 5: Iterative double auction (Pseudocode Step 6) ---
+        clearing_result = self.market.run_period(
+            buyers=auction_buyers,
+            sellers=auction_sellers,
+            margin=self.config.initial_shout_margin,
+            alpha=self.config.alpha,
+            unit_size=self.config.unit_size,
+            max_rounds=self.config.max_auction_rounds,
+            verbose=True,
+        )
         
         # --- Step 6: Settle trades and handle unmatched ---
         rewards = {}
@@ -203,19 +219,19 @@ class EnergyTradingEnv:
             bought_kwh = sum(t.quantity for t in trades_as_buyer)
             sold_kwh = sum(t.quantity for t in trades_as_seller)
             
-            # Determine unmet demand / curtailed surplus
+            # Determine unmet demand / curtailed surplus from iterative auction state
             action = actions[agent_id]
             unmet_demand = 0.0
             curtailed_surplus = 0.0
-            
-            if action.order is not None:
+
+            if action.order is not None and action.order.quantity > 1e-6:
                 if action.order.is_buy:
-                    # Check how much of the buy order was fulfilled
-                    requested = action.order.quantity
+                    # Unmet = units agent wanted but couldn't trade
+                    requested = agent._auction_units_to_trade * self.config.unit_size
                     unmet_demand = max(0.0, requested - bought_kwh)
                 else:
-                    # Check how much of the sell order was fulfilled
-                    offered = action.order.quantity
+                    # Curtailed = surplus agent offered but couldn't sell
+                    offered = agent._auction_units_to_trade * self.config.unit_size
                     curtailed_surplus = max(0.0, offered - sold_kwh)
             
             # Count starvation events
