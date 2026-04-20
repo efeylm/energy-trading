@@ -10,8 +10,6 @@ Runs a 24-hour simulation day and generates visualization plots:
 6. PV generation and load demand profiles
 """
 
-import sys
-import random
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib
@@ -171,35 +169,20 @@ def plot_results(metrics: MetricsCollector, env: EnergyTradingEnv, save_dir: str
 
 
 def main():
-    """Run the P2P energy trading simulation.
-
-    Usage:
-        python main.py          # random seed
-        python main.py 42       # fixed seed 42
-    """
-    if len(sys.argv) > 1:
-        try:
-            seed = int(sys.argv[1])
-        except ValueError:
-            print(f"Error: seed must be an integer, got '{sys.argv[1]}'")
-            sys.exit(1)
-    else:
-        seed = random.randint(0, 2**31 - 1)
-
-    print(f"Seed: {seed}")
-
+    """Run the P2P energy trading simulation."""
+    
     # Create configuration
-    config = SimConfig(seed=seed)
-
+    config = SimConfig()
+    
     # Create environment
     env = EnergyTradingEnv(config)
-
+    
     # Run simulation
     metrics = env.run_day()
-
+    
     # Generate plots
     plot_results(metrics, env, save_dir=".")
-
+    
     print("\nSimulation complete!")
 
 
