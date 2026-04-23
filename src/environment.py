@@ -64,17 +64,31 @@ class EnergyTradingEnv:
             seed=actual_seed,
         )
         
+        # Random number generator for parameter variation
+        rng = np.random.default_rng(actual_seed + 1)
+        
         # Create agents
         self.agents = []
         for i in range(self.config.n_agents):
             if i < self.config.n_prosumers:
                 agent_type = "prosumer"
-                mb_params = self.config.prosumer_mb
-                mc_params = self.config.prosumer_mc
+                base_mb = self.config.prosumer_mb
+                base_mc = self.config.prosumer_mc
             else:
                 agent_type = "consumer"
-                mb_params = self.config.consumer_mb
-                mc_params = self.config.consumer_mc
+                base_mb = self.config.consumer_mb
+                base_mc = self.config.consumer_mc
+            
+            # Add ±15% variation so same-type agents don't have identical curves
+            from src.config import AgentMBParams, AgentMCParams
+            mb_params = AgentMBParams(
+                alpha=base_mb.alpha * rng.uniform(0.85, 1.15),
+                beta=base_mb.beta * rng.uniform(0.85, 1.15)
+            )
+            mc_params = AgentMCParams(
+                gamma=base_mc.gamma * rng.uniform(0.85, 1.15),
+                delta=base_mc.delta * rng.uniform(0.85, 1.15)
+            )
             
             # Create battery with profile-determined initial energy
             battery = Battery(
@@ -149,7 +163,7 @@ class EnergyTradingEnv:
             (observations, rewards, done, info)
         """
         hour = self.current_hour
-        dt = self.config.delta_t
+        dt = self.config.delta_t # 1 saat
         
         # --- Step 1: Observations ---
         observations = self._get_all_observations()

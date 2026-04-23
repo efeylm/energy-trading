@@ -245,7 +245,7 @@ class EnergyAgent:
             self.starvation_count += 1
         
         # Update tracking
-        self.total_cost += net_cost + penalty
+        self.total_cost += net_cost + penalty #agentlar burayı düşük tutmaya çalışacak
         self.total_traded_kwh += bought_kwh + sold_kwh
         self.unmet_demand += unmet_demand
         self.curtailed_energy += curtailed_surplus
@@ -353,8 +353,8 @@ class EnergyAgent:
         """
         if not self.hourly_log:
             return 0.0
-        last = self.hourly_log[-1]
-        return -(last["net_cost"] + last["penalty"])
+        last = self.hourly_log[-1] # en son saatteki net maliyeti al
+        return -(last["net_cost"] + last["penalty"]) #negatif yapıyoruz ki düşük maliyet yüksek reward versin
     
     def __repr__(self) -> str:
         return (
