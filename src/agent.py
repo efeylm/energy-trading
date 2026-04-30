@@ -9,7 +9,6 @@ Each agent:
 1. Observes: inflexible load, battery state, market signals, hour
 2. Decides: battery action (charge/discharge/store) + market order (price, quantity)
 3. Uses MB/MC curves to determine willingness to pay / minimum ask
-4. Has emergency bidding when battery drops below starvation threshold
 """
 
 from dataclasses import dataclass
@@ -117,7 +116,7 @@ class EnergyAgent:
         2. Decide battery action (charge/discharge/store)
         3. Determine market quantity and role (buyer/seller)
         4. Set price using MB/MC curves
-        5. Apply emergency bidding if near starvation
+        5. Execute battery and market actions
         
         Returns:
             Action with order and battery decision.
@@ -175,19 +174,11 @@ class EnergyAgent:
             # BUYER — needs to buy from market
             bid_price = self.compute_mb(market_quantity)
             
-            # Emergency bidding: if battery critically low
-            if self.battery.energy <= self.config.starvation_threshold + self.battery.capacity_min:
-                bid_price *= self.config.emergency_price_multiplier
-                is_emergency = True
-            else:
-                is_emergency = False
-            
             order = Order(
                 agent_id=self.agent_id,
                 price=bid_price,
                 quantity=market_quantity,
                 is_buy=True,
-                is_emergency=is_emergency,
             )
         
         elif market_quantity < -0.01:
@@ -200,7 +191,6 @@ class EnergyAgent:
                 price=ask_price,
                 quantity=sell_quantity,
                 is_buy=False,
-                is_emergency=False,
             )
         
         # else: market_quantity ≈ 0 → no market participation this hour

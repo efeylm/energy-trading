@@ -54,15 +54,14 @@ class SimConfig:
     n_consumers: int = 4        # Agents with only load + battery
     
     # --- Time structure ---
-    t_hours: int = 24           # Simulation day length (hours)
+    t_hours: int = 24    # Simulation day length (hours)
     delta_t: float = 1.0        # Time step (hours)
     
     # --- Battery defaults ---
     battery: BatteryConfig = field(default_factory=BatteryConfig)
     
     # --- Starvation prevention ---
-    starvation_threshold: float = 0.5       # kWh - below this → emergency bid
-    emergency_price_multiplier: float = 3.0  # Emergency bid = MB * this multiplier
+    starvation_threshold: float = 0.5       # kWh - below this -> battery discharge blocked
     starvation_penalty: float = 10.0         # Reward penalty for unmet demand
     
     # --- MB/MC parameters per agent (overridable) ---

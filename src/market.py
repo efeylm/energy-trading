@@ -24,7 +24,6 @@ class Order:
     price: float        # $/kWh willingness price
     quantity: float     # kWh (positive for both buy and sell)
     is_buy: bool        # True = buy order, False = sell order
-    is_emergency: bool = False  # Emergency bid from starvation mechanism
 
 
 @dataclass

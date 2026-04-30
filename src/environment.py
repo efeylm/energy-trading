@@ -22,6 +22,8 @@ The environment orchestrates:
 
 from typing import List, Dict, Tuple, Optional
 import numpy as np
+import os
+from datetime import datetime
 
 from src.config import SimConfig
 from src.battery import Battery
@@ -45,6 +47,9 @@ class EnergyTradingEnv:
         self.profiles: Optional[ProfileManager] = None
         self.agents: List[EnergyAgent] = []
         self.current_hour = 0
+        self.log_base_dir = f"logs/run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        if not os.path.exists(self.log_base_dir):
+            os.makedirs(self.log_base_dir, exist_ok=True)
         
     def reset(self, seed: Optional[int] = None) -> Dict:
         """Initialize/reset the environment for a new simulation day.
@@ -314,7 +319,65 @@ class EnergyTradingEnv:
             "n_starvation_events": n_starvation,
         }
         
+        self._save_hourly_logs(clearing_result, actions, observations, total_unmet, total_curtailed)
+        
         return next_obs, rewards, done, info
+
+    def _save_hourly_logs(self, result: ClearingResult, actions: Dict[int, Action], obs_dict: Dict[int, Observation], total_unmet: float, total_curtailed: float):
+        """Append hourly data to agent-specific and market-wide log files."""
+        actual_hour = self.current_hour - 1
+        
+        # 1. Agent Logs (One file per agent for the whole day)
+        for agent in self.agents:
+            a_id = agent.agent_id
+            action = actions[a_id]
+            obs = obs_dict[a_id]
+            
+            log_path = os.path.join(self.log_base_dir, f"agent_{a_id}.txt")
+            mode = "a" if actual_hour > 0 else "w" # First hour overwrites/creates, others append
+            
+            with open(log_path, mode, encoding="utf-8") as f:
+                if actual_hour == 0:
+                    f.write(f"=== Simulation Run Log: Agent {a_id} ({agent.agent_type}) ===\n\n")
+                
+                f.write(f"--- HOUR {actual_hour:02d} ---\n")
+                f.write(f"PV: {obs.pv_generation:7.4f} kW | Load: {obs.load_demand:7.4f} kW | Net: {obs.inflexible_load:7.4f} kW\n")
+                f.write(f"SoC: {agent.battery.soc_fraction:7.2%} | BatEnergy: {agent.battery.energy:7.4f} kWh | BatAction: {action.battery_charge:7.4f} kW\n")
+                
+                if action.order:
+                    role = "BUY" if action.order.is_buy else "SELL"
+                    f.write(f"Market: {role:4} | Price: {action.order.price:7.4f} $/kWh | Qty: {action.order.quantity:7.4f} kWh\n")
+                else:
+                    f.write(f"Market: IDLE | No order submitted\n")
+                
+                trades = [t for t in result.trades if t.buyer_id == a_id or t.seller_id == a_id]
+                traded_qty = sum(t.quantity for t in trades)
+                f.write(f"Result: Traded {traded_qty:7.4f} kWh")
+                
+                if agent.hourly_log:
+                    last = agent.hourly_log[-1]
+                    f.write(f" | NetCost: {last['net_cost']:8.4f} $ | Penalty: {last['penalty']:7.4f} $")
+                
+                f.write(f"\nReward: {agent.get_reward(actual_hour):.4f}\n")
+                f.write("-" * 80 + "\n")
+
+        # 2. Market Log (One file for all hours)
+        market_path = os.path.join(self.log_base_dir, "market_log.txt")
+        mode = "a" if actual_hour > 0 else "w"
+        
+        with open(market_path, mode, encoding="utf-8") as f:
+            if actual_hour == 0:
+                f.write("=== Simulation Run Log: Market Overview ===\n\n")
+                
+            f.write(f"--- HOUR {actual_hour:02d} ---\n")
+            f.write(f"Trades: {len(result.trades):3d} | Volume: {result.total_traded_kwh:8.4f} kWh | Avg Price: {result.average_price:8.4f} $/kWh\n")
+            f.write(f"Unmet Demand: {total_unmet:8.4f} kWh | Curtailed: {total_curtailed:8.4f} kWh\n")
+            
+            if result.trades:
+                f.write("Recent Trades:\n")
+                for t in result.trades:
+                    f.write(f"  A{t.buyer_id} bought {t.quantity:5.2f} kWh from A{t.seller_id} @ ${t.price:.4f}\n")
+            f.write("-" * 80 + "\n")
     
     def run_day(self) -> MetricsCollector:
         """Run a complete 24-hour simulation day.
