@@ -139,8 +139,18 @@ class EnergyAgent:
                 available_above_reserve = max(0.0, self.battery.energy - bat_state.capacity_min - reserve_energy)
                 safe_discharge = min(max_discharge, available_above_reserve * self.battery.eta_discharge / dt)
                 
-                # Discharge up to the inflexible load
-                battery_action = -min(safe_discharge, inf_load)
+                # Sadece battery_sell_threshold'un üzerindeki fazla enerjiyi sat
+                capacity_range = bat_state.capacity_max - bat_state.capacity_min
+                sell_threshold = getattr(self.config, 'battery_sell_threshold', 0.8)
+                sell_threshold_energy = sell_threshold * capacity_range
+                
+                # Eşiğin üzerinde kalan satılabilir enerji miktarı
+                excess_energy = max(0.0, self.battery.energy - bat_state.capacity_min - sell_threshold_energy)
+                excess_power = excess_energy * self.battery.eta_discharge / dt
+                
+                # Hedef deşarj: Önce evin ihtiyacını karşıla (inf_load), sonra kalan excess_power'ı sat
+                target_discharge = min(safe_discharge, inf_load + excess_power)
+                battery_action = -target_discharge
             else:
                 # Battery low — don't discharge, go to market with full demand
                 battery_action = 0.0

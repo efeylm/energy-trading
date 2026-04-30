@@ -85,6 +85,7 @@ class SimConfig:
     # --- Battery storage heuristic thresholds ---
     # AI-generated: lower threshold so agents sell sooner instead of over-storing.
     battery_store_threshold: float = 0.35  # If battery SoC < this fraction, prefer storing
+    battery_sell_threshold: float = 0.80   # If battery SoC > this fraction, sell excess even when there is demand
     
     # --- Iterative Double Auction parameters ---
     # Pseudocode Step 6: "Tüm agent'lar mb curvelerinin yüzde x altından ilk tekliflerini verirler"
