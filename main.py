@@ -177,10 +177,9 @@ def plot_results(metrics: MetricsCollector, env: EnergyTradingEnv, save_dir: str
 def _plot_bids_asks(env, save_dir: str = "."):
     """Generate two separate Price×Quantity charts from env.bid_ask_log.
 
-    Chart 1 — Alici Teklifleri: all buy orders across all 24 hours,
-               each agent in a distinct colour.
-    Chart 2 — Satici Teklifleri: all sell orders across all 24 hours,
-               each agent in a distinct colour.
+    Chart 1 — Alici Teklifleri: all buy orders globally sorted across peak hour.
+    Chart 2 — Satici Teklifleri: all sell orders globally sorted across peak hour.
+    Chart 3 — Combined bids and asks.
     """
     bid_ask_log = env.bid_ask_log   # List[Dict[agent_id, Order]]
     n_agents = env.config.n_agents
@@ -196,63 +195,6 @@ def _plot_bids_asks(env, save_dir: str = "."):
         return f'C{i - n_producers + 1} (Consumer)'
 
     # ------------------------------------------------------------------ #
-    # Collect unit-order data from bid_ask_log                            #
-    # bid_ask_log[hour] = {agent_id: [unit_Order, ...]}                  #
-    # ------------------------------------------------------------------ #
-    #
-    # For each agent we build two views:
-    #   "by_hour"  – one (sorted) step-curve per active hour
-    #   "all"      – every unit across all hours (aggregate scatter)
-    #
-    BuyData  = {i: {'by_hour': {}, 'all_prices': [], 'all_cumqtys': []}
-                for i in range(n_agents)}
-    SellData = {i: {'by_hour': {}, 'all_prices': [], 'all_cumqtys': []}
-                for i in range(n_agents)}
-
-    for hour, hour_orders in enumerate(bid_ask_log):
-        for agent_id, unit_orders in hour_orders.items():
-            if not unit_orders:
-                continue
-            is_buy = unit_orders[0].is_buy
-            store  = BuyData[agent_id] if is_buy else SellData[agent_id]
-
-            # Sort units by price (desc for buyers, asc for sellers)
-            sorted_units = sorted(unit_orders,
-                                  key=lambda o: o.price,
-                                  reverse=is_buy)
-
-            # Build step-curve for this hour.
-            # Rule: each x value appears EXACTLY ONCE.
-            #   xs[i] = left edge of step i  (= cumulative qty before step i)
-            #   ys[i] = price for step i
-            # The LAST point (xs[-1], ys[-1]) is a sentinel: same price as the
-            # previous step but shifted right by its quantity so the final
-            # horizontal segment is visible.  No duplicate x values.
-            # matplotlib's drawstyle='steps-post' draws the horizontal bar
-            # from xs[i] to xs[i+1] at height ys[i], with a vertical drop at
-            # each boundary — the vertical is drawn by matplotlib, NOT stored
-            # in the data, so the data remains a proper function (x → y).
-            cum = 0.0
-            xs, ys = [], []
-            for u in sorted_units:
-                xs.append(cum)        # left edge
-                ys.append(u.price)
-                cum += u.quantity
-            # Sentinel: extend the last step to its right edge
-            if xs:
-                xs.append(cum)
-                ys.append(ys[-1])
-
-            store['by_hour'][hour] = (xs, ys)
-            # Aggregate scatter: midpoint of each step
-            mid = 0.0
-            for u in sorted_units:
-                mid += u.quantity / 2
-                store['all_prices'].append(u.price)
-                store['all_cumqtys'].append(mid)
-                mid += u.quantity / 2
-
-    # ------------------------------------------------------------------ #
     # Find the single representative hour (most agents with orders)        #
     # ------------------------------------------------------------------ #
     hour_agent_count = {}
@@ -261,35 +203,46 @@ def _plot_bids_asks(env, save_dir: str = "."):
     peak_hour = max(hour_agent_count, key=hour_agent_count.get)
 
     # ------------------------------------------------------------------ #
-    # Plot buyer bids  (one curve per agent, representative hour)          #
+    # Collect all unit-orders for the peak hour                          #
+    # ------------------------------------------------------------------ #
+    all_buys = []
+    all_sells = []
+    for agent_id, unit_orders in bid_ask_log[peak_hour].items():
+        for u in unit_orders:
+            if u.is_buy:
+                all_buys.append(u)
+            else:
+                all_sells.append(u)
+                
+    # Sort buys descending by price
+    all_buys.sort(key=lambda o: o.price, reverse=True)
+    # Sort sells ascending by price
+    all_sells.sort(key=lambda o: o.price, reverse=False)
+
+    # ------------------------------------------------------------------ #
+    # Plot buyer bids                                                    #
     # ------------------------------------------------------------------ #
     fig_b, ax_buy = plt.subplots(figsize=(10, 6))
     fig_b.suptitle(
         f'Alıcı Teklifleri — Fiyat × Kümülatif Miktar  (Saat {peak_hour})\n'
-        'Her renk bir agent; eğri o saatin talep çizelgesi',
+        'Teklifler en yüksekten en düşüğe sıralanmıştır',
         fontsize=13, fontweight='bold')
 
-    any_buyer = False
-
-    for agent_id in range(n_agents):
-        data  = BuyData[agent_id]
-        color = agent_colors[agent_id]
-        label = f'A{agent_id} {agent_label(agent_id)}'
-
-        result = data['by_hour'].get(peak_hour)
-        if result is None:
-            continue
-        xs, ys = result
-        ln, = ax_buy.plot(xs, ys,
-                          color=color, linewidth=2.0, alpha=0.9,
-                          drawstyle='steps-post', label=label)
-        any_buyer = True
+    cum_x = 0.0
+    agents_plotted = set()
+    for o in all_buys:
+        color = agent_colors[o.agent_id]
+        label = f'A{o.agent_id} {agent_label(o.agent_id)}' if o.agent_id not in agents_plotted else None
+        agents_plotted.add(o.agent_id)
+        ax_buy.plot([cum_x, cum_x + o.quantity], [o.price, o.price], 
+                    color=color, linewidth=3.0, alpha=0.9, label=label, solid_capstyle='butt')
+        cum_x += o.quantity
 
     ax_buy.set_xlabel('Kümülatif Miktar (kWh)', fontsize=11)
     ax_buy.set_ylabel('Teklif Fiyatı ($/kWh)',   fontsize=11)
     ax_buy.set_title('Alıcı Teklifleri (Buy Bids)', fontsize=12, fontweight='bold')
     ax_buy.grid(True, alpha=0.3)
-    if any_buyer:
+    if all_buys:
         ax_buy.legend(fontsize=8, loc='upper right')
     else:
         ax_buy.text(0.5, 0.5, 'Alıcı teklifi yok',
@@ -303,35 +256,29 @@ def _plot_bids_asks(env, save_dir: str = "."):
     print(f"Buyer bids plot saved to: {buy_path}")
 
     # ------------------------------------------------------------------ #
-    # Plot seller asks  (one curve per agent, representative hour)         #
+    # Plot seller asks                                                   #
     # ------------------------------------------------------------------ #
     fig_s, ax_sell = plt.subplots(figsize=(10, 6))
     fig_s.suptitle(
         f'Satıcı Teklifleri — Fiyat × Kümülatif Miktar  (Saat {peak_hour})\n'
-        'Her renk bir agent; eğri o saatin arz çizelgesi',
+        'Teklifler en düşükten en yükseğe sıralanmıştır',
         fontsize=13, fontweight='bold')
 
-    any_seller = False
-
-    for agent_id in range(n_agents):
-        data  = SellData[agent_id]
-        color = agent_colors[agent_id]
-        label = f'A{agent_id} {agent_label(agent_id)}'
-
-        result = data['by_hour'].get(peak_hour)
-        if result is None:
-            continue
-        xs, ys = result
-        ln, = ax_sell.plot(xs, ys,
-                           color=color, linewidth=2.0, alpha=0.9,
-                           drawstyle='steps-post', label=label)
-        any_seller = True
+    cum_x = 0.0
+    agents_plotted_sell = set()
+    for o in all_sells:
+        color = agent_colors[o.agent_id]
+        label = f'A{o.agent_id} {agent_label(o.agent_id)}' if o.agent_id not in agents_plotted_sell else None
+        agents_plotted_sell.add(o.agent_id)
+        ax_sell.plot([cum_x, cum_x + o.quantity], [o.price, o.price], 
+                     color=color, linewidth=3.0, alpha=0.9, label=label, solid_capstyle='butt')
+        cum_x += o.quantity
 
     ax_sell.set_xlabel('Kümülatif Miktar (kWh)', fontsize=11)
     ax_sell.set_ylabel('Teklif Fiyatı ($/kWh)',   fontsize=11)
     ax_sell.set_title('Satıcı Teklifleri (Sell Asks)', fontsize=12, fontweight='bold')
     ax_sell.grid(True, alpha=0.3)
-    if any_seller:
+    if all_sells:
         ax_sell.legend(fontsize=8, loc='upper left')
     else:
         ax_sell.text(0.5, 0.5, 'Satıcı teklifi yok',
@@ -345,68 +292,61 @@ def _plot_bids_asks(env, save_dir: str = "."):
     print(f"Seller asks plot saved to: {sell_path}")
 
     # ------------------------------------------------------------------ #
-    # Combined chart  (one curve per agent, representative hour)           #
+    # Combined chart                                                     #
     # ------------------------------------------------------------------ #
     fig_c, ax_c = plt.subplots(figsize=(13, 7))
     fig_c.suptitle(
         f'Alıcı & Satıcı Teklifleri — Fiyat × Kümülatif Miktar  (Saat {peak_hour})\n'
-        'Düz çizgi = Alıcı Bid  |  Kesikli çizgi = Satıcı Ask  |  Renk = Agent',
+        'Tüm çizgiler düz çizilmiştir | Renk = Agent',
         fontsize=13, fontweight='bold')
 
-    legend_handles = {}
+    cum_x_buy = 0.0
+    agents_plotted_combined = set()
+    
+    # Track legends manually to organize them well
+    import matplotlib.lines as mlines
+    agent_handles = []
+    
+    for o in all_buys:
+        color = agent_colors[o.agent_id]
+        label = f'A{o.agent_id} {agent_label(o.agent_id)}'
+        if o.agent_id not in agents_plotted_combined:
+            agents_plotted_combined.add(o.agent_id)
+            agent_handles.append(mlines.Line2D([], [], color=color, linewidth=2, label=label))
+            
+        ax_c.plot([cum_x_buy, cum_x_buy + o.quantity], [o.price, o.price], 
+                  color=color, linewidth=3.0, alpha=0.9, linestyle='-', solid_capstyle='butt')
+        
+        # Add small text for agent ID above/below line
+        # ax_c.text(cum_x_buy + o.quantity/2, o.price, f"A{o.agent_id}", ha='center', va='bottom', fontsize=7, color=color)
+        
+        cum_x_buy += o.quantity
 
-    for agent_id in range(n_agents):
-        color = agent_colors[agent_id]
-        label = f'A{agent_id} {agent_label(agent_id)}'
-        buy_d  = BuyData[agent_id]
-        sell_d = SellData[agent_id]
-
-        # Buyer curve — solid
-        b_result = buy_d['by_hour'].get(peak_hour)
-        if b_result is not None:
-            xs, ys = b_result
-            ln, = ax_c.plot(xs, ys,
-                            color=color, linewidth=2.0, alpha=0.9,
-                            linestyle='-', drawstyle='steps-post', label=label)
-            legend_handles.setdefault(agent_id, {})['buy'] = ln
-
-        # Seller curve — dashed
-        s_result = sell_d['by_hour'].get(peak_hour)
-        if s_result is not None:
-            xs, ys = s_result
-            ln, = ax_c.plot(xs, ys,
-                            color=color, linewidth=2.0, alpha=0.9,
-                            linestyle='--', drawstyle='steps-post')
-            legend_handles.setdefault(agent_id, {})['sell'] = ln
-            if agent_id not in legend_handles or 'buy' not in legend_handles[agent_id]:
-                ln.set_label(label)
+    cum_x_sell = 0.0
+    for o in all_sells:
+        color = agent_colors[o.agent_id]
+        label = f'A{o.agent_id} {agent_label(o.agent_id)}'
+        if o.agent_id not in agents_plotted_combined:
+            agents_plotted_combined.add(o.agent_id)
+            agent_handles.append(mlines.Line2D([], [], color=color, linewidth=2, label=label))
+            
+        ax_c.plot([cum_x_sell, cum_x_sell + o.quantity], [o.price, o.price], 
+                  color=color, linewidth=3.0, alpha=0.9, linestyle='-', solid_capstyle='butt')
+                  
+        cum_x_sell += o.quantity
 
     ax_c.set_xlabel('Kümülatif Miktar (kWh)', fontsize=11)
     ax_c.set_ylabel('Teklif Fiyatı ($/kWh)', fontsize=11)
     ax_c.set_title('Birleşik Teklif Grafiği', fontsize=12, fontweight='bold')
     ax_c.grid(True, alpha=0.3)
 
-    # --- Legend: two sections ---
-    # Section 1: one coloured entry per agent (from buyer solid lines)
-    agent_handles = [
-        legend_handles[aid].get('buy') or legend_handles[aid].get('sell')
-        for aid in sorted(legend_handles)
-        if ('buy' in legend_handles[aid] or 'sell' in legend_handles[aid])
-    ]
-    # Section 2: two style proxy lines for buyer vs seller
-    import matplotlib.lines as mlines
-    style_buy  = mlines.Line2D([], [], color='black', linewidth=1.5,
-                               linestyle='-',  label='Alıcı Bid (solid)')
-    style_sell = mlines.Line2D([], [], color='black', linewidth=1.5,
-                               linestyle='--', label='Satıcı Ask (dashed)')
+    # Sort agent handles by the agent ID in their label text
+    agent_handles.sort(key=lambda h: int(h.get_label().split()[0][1:]))
 
     leg1 = ax_c.legend(handles=agent_handles,
                        fontsize=8, loc='upper right',
                        title='Agent', title_fontsize=9)
     ax_c.add_artist(leg1)
-    ax_c.legend(handles=[style_buy, style_sell],
-                fontsize=9, loc='upper center',
-                title='Çizgi Stili', title_fontsize=9)
 
     fig_c.tight_layout()
     combined_path = f"{save_dir}/combined_bids_asks.png"

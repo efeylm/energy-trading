@@ -600,7 +600,7 @@ class PartialMatchDoubleAuction:
 
             # Match them
             trade_qty = min(buyer.remaining_quantity, seller.remaining_quantity)
-            trade_price = seller.price
+            trade_price = (buyer.price + seller.price) / 2.0
             
             trade = PartialTrade(
                 buyer_id=buyer.agent_id,
