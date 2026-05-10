@@ -480,17 +480,13 @@ class PartialClearingResult:
 
 
 class PartialMatchDoubleAuction:
-    """Double Auction with partial matching and order-book persistence.
+    """Double Auction with partial matching (No order-book persistence).
 
     Rules implemented:
     1. Sellers enter a fixed-quantity sell offer.
-    2. Buyers are sorted by marginal benefit (bid price descending), with
-       ties broken by quantity descending so larger buyers go first.
-    3. Each seller's quantity is distributed across sorted buyers; a buyer
-       and seller CAN trade at different prices than other buyer-seller pairs
-       (price discrimination per unit, using mid-price of that specific pair).
-    4. Any unmatched quantity from a sell offer stays in the order book and
-       waits for a future buyer in the next clearing period.
+    2. Buyers are sorted by marginal benefit (bid price descending).
+    3. Each seller's quantity is distributed across sorted buyers.
+    4. Any unmatched quantity (buy or sell) is DISCARDED at the end of the period.
     5. Buyers whose demand is not fully met by the current best seller are
        matched against additional sellers (partial cross-seller matching).
 
@@ -621,13 +617,13 @@ class PartialMatchDoubleAuction:
             # in the next iteration via the <= 1e-9 checks above.
 
 
-        # Step 4: Collect pending (unmatched) orders that remain in book
-        # Prune fully-matched entries from the books
-        self._buy_book = [o for o in self._buy_book if o.remaining_quantity > 1e-9]
-        self._sell_book = [o for o in self._sell_book if o.remaining_quantity > 1e-9]
-
-        result.pending_buy_orders = list(self._buy_book)
-        result.pending_sell_orders = list(self._sell_book)
+        # Step 4: Record unmatched orders for metrics (optional) but CLEAR the actual books
+        # After matching, any leftover quantity is DISCARDED (No persistence/order book)
+        result.pending_buy_orders = [o for o in self._buy_book if o.remaining_quantity > 1e-9]
+        result.pending_sell_orders = [o for o in self._sell_book if o.remaining_quantity > 1e-9]
+        
+        self._buy_book = []
+        self._sell_book = []
 
         # Step 5: Finalize
         result.compute_stats()
