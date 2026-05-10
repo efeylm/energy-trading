@@ -27,7 +27,7 @@ def plot_results(metrics: MetricsCollector, env: EnergyTradingEnv, save_dir: str
     n_producers = env.config.n_producers
     n_agents = env.config.n_agents
     
-    fig, axes = plt.subplots(4, 2, figsize=(16, 20))
+    fig, axes = plt.subplots(3, 2, figsize=(16, 15))
     fig.suptitle("P2P Energy Trading — POMG Simulation Results", fontsize=16, fontweight='bold')
     
     # --- 1. Hourly Average Clearing Price ---
@@ -62,54 +62,8 @@ def plot_results(metrics: MetricsCollector, env: EnergyTradingEnv, save_dir: str
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
     
-    # --- 3. Battery SoC Timeseries ---
+    # --- 3. PV Generation & Load Profiles ---
     ax = axes[1, 0]
-    colors_producer = plt.cm.Blues(np.linspace(0.4, 0.9, n_producers))
-    colors_consumer = plt.cm.Reds(np.linspace(0.4, 0.9, n_agents - n_producers))
-
-    for i in range(n_agents):
-        soc = metrics.get_battery_soc_timeseries(i)
-        if i < n_producers:
-            ax.plot(hours, soc, color=colors_producer[i], linewidth=1.5,
-                    label=f'Pr{i+1}', linestyle='-')
-        else:
-            ax.plot(hours, soc, color=colors_consumer[i - n_producers], linewidth=1.5,
-                    label=f'C{i - n_producers + 1}', linestyle='--')
-    
-    ax.axhline(y=0.2, color='gray', linestyle=':', alpha=0.5, label='Starvation zone')
-    ax.set_xlabel('Hour')
-    ax.set_ylabel('State of Charge (%)')
-    ax.set_title('Battery SoC Over Time')
-    ax.set_xlim(-0.5, 23.5)
-    ax.set_ylim(-0.05, 1.05)
-    ax.set_xticks(range(0, 24, 2))
-    ax.grid(True, alpha=0.3)
-    ax.legend(fontsize=7, ncol=3)
-    
-    # --- 4. Agent Energy Bills ---
-    ax = axes[1, 1]
-    bills = metrics.get_agent_bills()
-    agent_ids = sorted(bills.keys())
-    bill_values = [bills[i] for i in agent_ids]
-    labels = [f'Pr{i+1}' if i < n_producers else f'C{i - n_producers + 1}'
-              for i in agent_ids]
-    colors = ['forestgreen' if i < n_producers else 'crimson' for i in agent_ids]
-    
-    bars = ax.bar(labels, bill_values, color=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
-    ax.set_xlabel('Agent')
-    ax.set_ylabel('Net Energy Cost ($)')
-    ax.set_title('Agent Energy Bills (negative = income)')
-    ax.grid(True, alpha=0.3, axis='y')
-    ax.axhline(y=0, color='black', linewidth=0.8)
-    
-    # Add value labels on bars
-    for bar, val in zip(bars, bill_values):
-        y_pos = bar.get_height() if val >= 0 else bar.get_height() - 0.01
-        ax.text(bar.get_x() + bar.get_width() / 2, y_pos, f'${val:.3f}',
-                ha='center', va='bottom' if val >= 0 else 'top', fontsize=8)
-    
-    # --- 5. PV Generation & Load Profiles ---
-    ax = axes[2, 0]
     for i in range(n_agents):
         pv = np.array([env.profiles.get_pv_generation(i, h) for h in range(env.config.t_hours)])
         load = np.array([env.profiles.get_load_demand(i, h) for h in range(env.config.t_hours)])
@@ -135,18 +89,39 @@ def plot_results(metrics: MetricsCollector, env: EnergyTradingEnv, save_dir: str
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
     
-    # --- 6. Cumulative metrics text ---
-    ax = axes[2, 1]
+    # --- 4. Agent Energy Bills ---
+    ax = axes[1, 1]
+    bills = metrics.get_agent_bills()
+    agent_ids = sorted(bills.keys())
+    bill_values = [bills[i] for i in agent_ids]
+    labels = [f'Pr{i+1}' if i < n_producers else f'C{i - n_producers + 1}'
+              for i in agent_ids]
+    colors = ['forestgreen' if i < n_producers else 'crimson' for i in agent_ids]
+    
+    bars = ax.bar(labels, bill_values, color=colors, alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax.set_xlabel('Agent')
+    ax.set_ylabel('Net Energy Cost ($)')
+    ax.set_title('Agent Energy Bills (negative = income)')
+    ax.grid(True, alpha=0.3, axis='y')
+    ax.axhline(y=0, color='black', linewidth=0.8)
+    
+    # Add value labels on bars
+    for bar, val in zip(bars, bill_values):
+        y_pos = bar.get_height() if val >= 0 else bar.get_height() - 0.01
+        ax.text(bar.get_x() + bar.get_width() / 2, y_pos, f'${val:.3f}',
+                ha='center', va='bottom' if val >= 0 else 'top', fontsize=8)
+
+    # --- 5. Cumulative metrics text ---
+    ax = axes[2, 0]
     ax.axis('off')
     
     summary_text = (
-        f"Total Internal Trading:  {metrics.total_internal_trading():.2f} kWh\n"
-        f"Total Unmet Demand:      {metrics.total_unmet_demand():.2f} kWh\n"
-        f"Total Curtailment:       {metrics.total_curtailment():.2f} kWh\n"
-        f"Avg Clearing Price:      ${metrics.average_clearing_price():.4f}/kWh\n"
-        f"Survival Rate:           {metrics.survival_rate():.1%}\n"
-        f"\n"
-        f"Total Agent Bills:\n"
+        "===== SIMULATION SUMMARY =====\n\n"
+        f"Total Trading:  {metrics.total_internal_trading():.2f} kWh\n"
+        f"Avg Price:      ${metrics.average_clearing_price():.4f}/kWh\n"
+        f"Total Unmet:    {metrics.total_unmet_demand():.2f} kWh\n"
+        f"Total Curtail:  {metrics.total_curtailment():.2f} kWh\n\n"
+        "Agent Bills:\n"
     )
     for i in agent_ids:
         label = f'Pr{i+1}' if i < n_producers else f'C{i - n_producers + 1}'
@@ -159,6 +134,9 @@ def plot_results(metrics: MetricsCollector, env: EnergyTradingEnv, save_dir: str
             fontsize=10, verticalalignment='top', fontfamily='monospace',
             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
     ax.set_title('Summary Statistics')
+
+    # --- 6. Empty Axis ---
+    axes[2, 1].axis('off')
     
     plt.tight_layout()
     filepath = f"{save_dir}/simulation_results.png"

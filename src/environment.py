@@ -16,16 +16,16 @@ The environment orchestrates:
 2. Agent observations and decisions
 3. Market order submission
 4. Batch clearing (Algorithm 1)
-5. Trade settlement and battery updates
+5. Trade settlement
 6. Reward computation
 """
 
 from typing import List, Dict, Tuple, Optional
 import math
+# pyrefly: ignore [missing-import]
 import numpy as np
 
 from src.config import SimConfig
-from src.battery import Battery
 from src.agent import EnergyAgent, Observation, Action
 from src.market import (
     DoubleAuctionMarket, IterativeDoubleAuction, Order, ClearingResult,
@@ -66,7 +66,6 @@ class EnergyTradingEnv:
         self.profiles = ProfileManager(
             n_producers=self.config.n_producers,
             n_consumers=self.config.n_consumers,
-            battery_config=self.config.battery,
             seed=actual_seed,
         )
         
@@ -96,22 +95,11 @@ class EnergyTradingEnv:
                 delta=base_mc.delta * rng.uniform(0.85, 1.15)
             )
             
-            # Create battery with profile-determined initial energy
-            battery = Battery(
-                capacity_min=self.config.battery.capacity_min,
-                capacity_max=self.config.battery.capacity_max,
-                power_max=self.config.battery.power_max,
-                eta_charge=self.config.battery.eta_charge,
-                eta_discharge=self.config.battery.eta_discharge,
-                initial_energy=self.profiles.get_initial_battery(i),
-            )
-            
             agent = EnergyAgent(
                 agent_id=i,
                 agent_type=agent_type,
                 mb_params=mb_params,
                 mc_params=mc_params,
-                battery=battery,
                 config=self.config,
             )
             self.agents.append(agent)
@@ -142,17 +130,10 @@ class EnergyTradingEnv:
                 inflexible_load=self.profiles.get_inflexible_load(
                     agent.agent_id, self.current_hour
                 ),
-                battery_state=agent.battery.get_state(),
                 best_bid=market_info["best_bid"],
                 best_ask=market_info["best_ask"],
                 last_avg_price=market_info["last_avg_price"],
                 hour=self.current_hour,
-                pv_generation=self.profiles.get_pv_generation(
-                    agent.agent_id, self.current_hour
-                ),
-                load_demand=self.profiles.get_load_demand(
-                    agent.agent_id, self.current_hour
-                ),
             )
             observations[agent.agent_id] = obs
         
@@ -163,18 +144,16 @@ class EnergyTradingEnv:
 
         Steps:
         1. Generate observations for all agents
-        2. Each agent decides action (battery + market order)
-        3. Apply battery actions
-        4. Submit orders to PartialMatchDoubleAuction
-        5. Clear the market (partial matching, unmatched orders persist)
-        6. Settle trades and handle unmatched orders
-        7. Compute rewards and metrics
+        2. Each agent decides action (market order)
+        3. Submit orders to PartialMatchDoubleAuction
+        4. Clear the market (partial matching, unmatched orders persist)
+        5. Settle trades and handle unmatched orders
+        6. Compute rewards and metrics
 
         Returns:
             (observations, rewards, done, info)
         """
         hour = self.current_hour
-        dt = self.config.delta_t  # 1 hour
 
         # --- Step 1: Observations ---
         observations = self._get_all_observations()
@@ -186,11 +165,7 @@ class EnergyTradingEnv:
             action = agent.decide_action(obs)
             actions[agent.agent_id] = action
 
-        # --- Step 3: Apply battery actions ---
-        for agent in self.agents:
-            agent.apply_battery_action(actions[agent.agent_id].battery_charge, dt)
-
-        # --- Step 4: Submit unit-by-unit orders priced by MB/MC curves ---
+        # --- Step 3: Submit unit-by-unit orders priced by MB/MC curves ---
         # ─────────────────────────────────────────────────────────────────
         # Each agent's total market quantity is split into chunks of
         # unit_size kWh.  Every chunk gets its own price:
@@ -218,11 +193,7 @@ class EnergyTradingEnv:
         s_flat_prob = self.config.seller_flat_prob
         s_flat_min  = self.config.seller_flat_min_units
         s_flat_max  = self.config.seller_flat_max_units
-        b_flat_prob = self.config.buyer_flat_prob
-        b_flat_min  = self.config.buyer_flat_min_units
-        b_flat_max  = self.config.buyer_flat_max_units
         flat_sellers = []   # for logging
-        flat_buyers  = []
 
         for agent in self.agents:
             order = actions[agent.agent_id].order
@@ -238,15 +209,11 @@ class EnergyTradingEnv:
             # Split into unit orders, each priced by MB or MC at cumulative qty
             n_units = max(1, math.ceil(order.quantity / unit_size))
 
-            # ── Flat-block pricing ───────────────────────────────────────────
-            # SELLERS: first `flat_block` units all priced at MC(0).
-            # BUYERS:  first `buy_flat_block` units all bid at MB(0).
-            # In both cases the remaining units follow the normal curve.
+            # ── Flat-block pricing (SELLERS only) ────────────────────────────
+            # first `flat_block` units all priced at MC(0).
             # ────────────────────────────────────────────────────────────────
             flat_block     = 0      # seller: units priced at MC(0)
             flat_price     = 0.0
-            buy_flat_block = 0      # buyer:  units bid at MB(0)
-            buy_flat_price = 0.0
 
             if not order.is_buy and n_units >= 2 and self._step_rng.random() < s_flat_prob:
                 hi = min(s_flat_max, n_units)
@@ -254,13 +221,6 @@ class EnergyTradingEnv:
                 flat_block = int(self._step_rng.integers(lo, hi + 1))
                 flat_price = agent.compute_mc(0.0)
                 flat_sellers.append(f"A{agent.agent_id}({flat_block}×${flat_price:.4f})")
-
-            if order.is_buy and n_units >= 2 and self._step_rng.random() < b_flat_prob:
-                hi = min(b_flat_max, n_units)
-                lo = min(b_flat_min, hi)
-                buy_flat_block = int(self._step_rng.integers(lo, hi + 1))
-                buy_flat_price = agent.compute_mb(0.0, hour=self.current_hour)
-                flat_buyers.append(f"A{agent.agent_id}({buy_flat_block}×${buy_flat_price:.4f})")
 
             unit_orders = []
 
@@ -315,8 +275,6 @@ class EnergyTradingEnv:
         # Log flat-block pricing this hour
         if flat_sellers:
             print(f"    [FLAT-S] Sabit fiyat kullanan satıcılar: {', '.join(flat_sellers)}")
-        if flat_buyers:
-            print(f"    [FLAT-B] Sabit fiyat kullanan alıcılar:  {', '.join(flat_buyers)}")
 
         # Snapshot this hour's unit orders for post-simulation plotting
         self.bid_ask_log.append(hour_bid_ask)
@@ -394,7 +352,6 @@ class EnergyTradingEnv:
             )
 
             rewards[agent_id] = agent.get_reward(hour)
-            agent_battery_soc[agent_id] = agent.battery.soc_fraction
 
             buy_cost    = sum(t.price * t.quantity for t in trades_as_buyer)
             sell_income = sum(t.price * t.quantity for t in trades_as_seller)
@@ -417,8 +374,6 @@ class EnergyTradingEnv:
             total_curtailed=total_curtailed,
             n_buyers=n_buyers,
             n_sellers=n_sellers,
-            n_starvation_events=n_starvation,
-            agent_battery_soc=agent_battery_soc,
         )
         self.metrics.record_hour(hourly)
 
