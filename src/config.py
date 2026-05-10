@@ -50,12 +50,12 @@ class SimConfig:
     """Master simulation configuration."""
     
     # --- Agent population ---
-    n_prosumers: int = 4        # Agents with PV + battery + load
+    n_producers: int = 4        # Agents with PV + battery + load
     n_consumers: int = 4        # Agents with only load + battery
     
     # --- Time structure ---
-    t_hours: int = 24           # Simulation day length (hours)
-    delta_t: float = 1.0        # Time step (hours)
+    t_hours: int = 48           # Simulation day length (steps)
+    delta_t: float = 0.5        # Time step (hours)
     
     # --- Battery defaults ---
     battery: BatteryConfig = field(default_factory=BatteryConfig)
@@ -66,13 +66,13 @@ class SimConfig:
     starvation_penalty: float = 10.0         # Reward penalty for unmet demand
     
     # --- MB/MC parameters per agent (overridable) ---
-    # Prosumer MB params (when buying)
-    prosumer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
+    # Producer MB params (when buying)
+    producer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
         alpha=0.18, beta=0.25
     ))
-    # Prosumer MC params (when selling)
-    prosumer_mc: AgentMCParams = field(default_factory=lambda: AgentMCParams(
-        gamma=0.015, delta=0.04
+    # Producer MC params (when selling)
+    producer_mc: AgentMCParams = field(default_factory=lambda: AgentMCParams(
+        gamma=0.03, delta=0.08
     ))
     # Consumer MB params (when buying — typically higher willingness to pay)
     consumer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
@@ -96,8 +96,38 @@ class SimConfig:
     unit_size: float = 0.5              # kWh per discrete tradeable unit
 
     # --- Random seed for reproducibility ---
-    seed: int = 42
+    seed: int = 123
+
+    # --- Seller flat-block pricing (randomness) ---
+    # With probability `seller_flat_prob`, a seller prices a random-sized
+    # contiguous block of units (starting from unit 1) all at the same flat
+    # price — their MC(0) — instead of using the strictly-increasing MC curve
+    # for every unit.  This models real-world behaviour where a producer offers
+    # a fixed tariff for a batch of kWh.
+    #
+    # Examples:
+    #   seller_flat_prob = 0.0   → always MC-curve pricing (old behaviour)
+    #   seller_flat_prob = 1.0   → every seller always uses flat pricing
+    #   seller_flat_prob = 0.5   → ~50 % chance per seller per hour
+    #
+    # Block size is drawn uniformly from
+    #   [seller_flat_min_units, min(seller_flat_max_units, n_seller_units)]
+    seller_flat_prob: float = 0.5        # 0 = never flat, 1 = always flat
+    seller_flat_min_units: int = 2       # min contiguous flat-priced units
+    seller_flat_max_units: int = 5       # max contiguous flat-priced units
+
+    # --- Buyer flat-block pricing (randomness) ---
+    # Symmetric to seller_flat: with probability `buyer_flat_prob`, a consumer
+    # bids the same flat price — their MB(0) — for a contiguous prefix of units
+    # instead of using the diminishing MB curve.  This models a buyer who has a
+    # strong, inelastic need for the first few kWh (e.g. must-have appliances).
+    buyer_flat_prob: float = 0.0         # 0 = never flat, 1 = always flat (DISABLED)
+    buyer_flat_min_units: int = 2        # min contiguous flat-bid units
+    buyer_flat_max_units: int = 5        # max contiguous flat-bid units
+
+    # --- Data Paths ---
+    mb_data_path: str = "src/data/mb_hourly_params.json"
 
     @property
     def n_agents(self) -> int:
-        return self.n_prosumers + self.n_consumers
+        return self.n_producers + self.n_consumers

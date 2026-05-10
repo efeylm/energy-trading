@@ -1,5 +1,5 @@
 """
-Synthetic energy profiles for prosumers and consumers.
+Synthetic energy profiles for producers and consumers.
 
 Generates daily PV generation and load demand profiles inspired by the
 Australian Ausgrid dataset used in Qiu et al. (IJCAI-21).
@@ -20,43 +20,26 @@ def _gaussian(x: np.ndarray, mu: float, sigma: float, amplitude: float) -> np.nd
 
 def generate_pv_profile(
     agent_id: int,
-    peak_kw: float = 5.0,
+    peak_kw: float = 8.0,
     noise_std: float = 0.3,
     rng: np.random.Generator = None,
 ) -> np.ndarray:
-    """Generate 24-hour PV generation profile for a prosumer.
-    
-    Args:
-        agent_id: Used to create slight variation between agents.
-        peak_kw: Peak generation power (kW) at solar noon.
-        noise_std: Standard deviation of random noise.
-        rng: Random number generator.
-    
-    Returns:
-        Array of shape (24,) with PV generation in kW for each hour.
-    """
+    """Generate 48-step PV generation profile (half-hourly)."""
     if rng is None:
         rng = np.random.default_rng()
     
-    hours = np.arange(24, dtype=float)
+    # 48 steps covering 24 hours (0.0, 0.5, 1.0 ... 23.5)
+    hours = np.arange(0, 24, 0.5)
     
-    # Solar peak varies slightly per agent (between 11.5 and 12.5)
     peak_hour = 12.0 + (agent_id % 4 - 1.5) * 0.3
-    
-    # Peak power varies per agent (±20%)
     agent_peak = peak_kw * (0.8 + 0.1 * (agent_id % 4))
     
-    # Gaussian bell curve for solar generation
     profile = _gaussian(hours, mu=peak_hour, sigma=2.5, amplitude=agent_peak)
-    
-    # Zero out nighttime (before 6, after 19)
     profile[hours < 6] = 0.0
     profile[hours > 19] = 0.0
     
-    # Add small positive noise (generation can't be negative)
-    noise = rng.normal(0, noise_std, size=24)
+    noise = rng.normal(0, noise_std, size=48)
     profile = np.maximum(0.0, profile + noise)
-    
     return profile
 
 
@@ -67,46 +50,22 @@ def generate_load_profile(
     noise_std: float = 0.4,
     rng: np.random.Generator = None,
 ) -> np.ndarray:
-    """Generate 24-hour load demand profile.
-    
-    Double-peaked profile: morning rush (7-9) and evening peak (17-20).
-    
-    Args:
-        agent_id: Used to create variation between agents.
-        base_kw: Baseline load (always-on devices).
-        peak_kw: Peak demand during rush hours.
-        noise_std: Standard deviation of random noise.
-        rng: Random number generator.
-    
-    Returns:
-        Array of shape (24,) with load demand in kW for each hour.
-    """
+    """Generate 48-step load demand profile (half-hourly)."""
     if rng is None:
         rng = np.random.default_rng()
     
-    hours = np.arange(24, dtype=float)
-    
-    # Agent-specific variation
+    hours = np.arange(0, 24, 0.5)
     agent_factor = 0.8 + 0.15 * (agent_id % 8)
     
-    # Base load (always present)
-    profile = np.full(24, base_kw * agent_factor)
+    profile = np.full(48, base_kw * agent_factor)
     
-    # Morning peak (7-9)
     morning = _gaussian(hours, mu=8.0, sigma=1.2, amplitude=peak_kw * 0.6 * agent_factor)
-    
-    # Evening peak (17-20) — typically stronger
     evening = _gaussian(hours, mu=18.5, sigma=1.5, amplitude=peak_kw * agent_factor)
-    
-    # Midday bump (12-14) — smaller
     midday = _gaussian(hours, mu=13.0, sigma=1.0, amplitude=peak_kw * 0.3 * agent_factor)
     
     profile += morning + evening + midday
-    
-    # Add noise (demand can't be negative)
-    noise = rng.normal(0, noise_std, size=24)
+    noise = rng.normal(0, noise_std, size=48)
     profile = np.maximum(0.5, profile + noise)
-    
     return profile
 
 
@@ -141,14 +100,14 @@ class ProfileManager:
     
     def __init__(
         self,
-        n_prosumers: int,
+        n_producers: int,
         n_consumers: int,
         battery_config,
         seed: int = 42,
     ):
-        self.n_prosumers = n_prosumers
+        self.n_producers = n_producers
         self.n_consumers = n_consumers
-        self.n_agents = n_prosumers + n_consumers
+        self.n_agents = n_producers + n_consumers
         self.battery_config = battery_config
         self.rng = np.random.default_rng(seed)
         
@@ -162,8 +121,8 @@ class ProfileManager:
     def _generate_all_profiles(self):
         """Generate profiles for all agents."""
         for i in range(self.n_agents):
-            # PV generation: only prosumers have PV panels
-            if i < self.n_prosumers:
+            # PV generation: only producers have PV panels
+            if i < self.n_producers:
                 # AI-generated: calibrated PV peak for healthier P2P liquidity.
                 # Keeps scarcity but enables regular sell-side availability at midday.
                 self.pv_profiles[i] = generate_pv_profile(
@@ -173,19 +132,20 @@ class ProfileManager:
                     rng=self.rng,
                 )
             else:
-                self.pv_profiles[i] = np.zeros(24)  # Consumers have no PV
+                self.pv_profiles[i] = np.zeros(48)  # Consumers have no PV
             
-            # AI-generated: differentiated demand profiles to avoid extreme deficit regime.
-            # Prosumers keep moderate load, consumers remain demand-heavy.
-            if i < self.n_prosumers:
+            # Load profile
+            if i < self.n_producers:
+                # Producers: light load to ensure they have surplus to sell
                 self.load_profiles[i] = generate_load_profile(
                     i,
-                    base_kw=1.6,
-                    peak_kw=4.8,
-                    noise_std=0.3,
+                    base_kw=0.8,
+                    peak_kw=2.5,
+                    noise_std=0.2,
                     rng=self.rng,
                 )
             else:
+                # Consumers: typical higher load
                 self.load_profiles[i] = generate_load_profile(
                     i,
                     base_kw=2.0,
@@ -226,7 +186,7 @@ class ProfileManager:
         """Print summary of generated profiles."""
         lines = ["=== Profile Summary ==="]
         for i in range(self.n_agents):
-            agent_type = "Prosumer" if i < self.n_prosumers else "Consumer"
+            agent_type = "Producer" if i < self.n_producers else "Consumer"
             total_pv = self.pv_profiles[i].sum()
             total_load = self.load_profiles[i].sum()
             init_bat = self.initial_battery[i]

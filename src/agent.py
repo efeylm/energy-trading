@@ -1,5 +1,5 @@
 """
-Energy agents: Prosumers and Consumers.
+Energy agents: Producers and Consumers.
 
 Combines:
 - Qiu et al. POMG observation/action structure (Section 3.3)
@@ -15,6 +15,8 @@ Each agent:
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import math
+import os
+import json
 
 from src.battery import Battery, BatteryState
 from src.config import AgentMBParams, AgentMCParams, SimConfig
@@ -53,15 +55,15 @@ class Action:
 class EnergyAgent:
     """Base class for energy trading agents.
     
-    Supports both prosumer and consumer roles with heuristic strategy:
-    - Prosumer: Has PV generation, can be buyer or seller depending on net position
+    Supports both producer and consumer roles with heuristic strategy:
+    - Producer: Has PV generation, can be buyer or seller depending on net position
     - Consumer: Only has load, primarily buyer but can sell from battery
     """
     
     def __init__(
         self,
         agent_id: int,
-        agent_type: str,       # "prosumer" or "consumer"
+        agent_type: str,       # "producer" or "consumer"
         mb_params: AgentMBParams,
         mc_params: AgentMCParams,
         battery: Battery,
@@ -81,6 +83,19 @@ class EnergyAgent:
         self.curtailed_energy = 0.0     # Cumulative curtailed surplus (kWh)
         self.starvation_count = 0       # Number of starvation events
         self.hourly_log = []            # Detailed per-hour records
+        
+        # --- Hourly MB Data (from Ausgrid extraction) ---
+        self.hourly_mb_data = {}
+        # Try agent-specific data first, then global config path
+        specific_path = f"src/data/mb_agent_{agent_id}.json"
+        path_to_load = specific_path if os.path.exists(specific_path) else self.config.mb_data_path
+        
+        if os.path.exists(path_to_load):
+            try:
+                with open(path_to_load, 'r') as f:
+                    self.hourly_mb_data = json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load MB data for agent {agent_id}: {e}")
 
         # --- Iterative auction state (reset each hour via setup_auction) ---
         # Pseudocode Steps 4–6: role/quantity/price determined per-hour
@@ -90,14 +105,39 @@ class EnergyAgent:
         self._auction_units_to_trade: int = 0
         self._auction_units_traded: int = 0
         self._auction_current_offer: Optional[float] = None
+        self._current_hour: int = 0
     
-    def compute_mb(self, quantity: float) -> float:
-        """Marginal Benefit: MB(q) = alpha * exp(-beta * q)
+    def compute_mb(self, quantity: float, hour: Optional[int] = None) -> float:
+        """Marginal Benefit: MB(q) = A - B * q (Linear from Data)
         
-        The value (willingness to pay) for the q-th unit of energy.
-        Decreases with quantity (diminishing marginal utility).
+        If hourly data is available, uses A and B from Ausgrid dataset.
+        Otherwise falls back to exponential: alpha * exp(-beta * q).
         """
         q = max(0.0, quantity)
+        
+        # Try to use hourly data-driven MB curve
+        if hour is not None:
+            # Map step index (0, 1, 2...) to Ausgrid time strings ("0:30", "1:00"...)
+            # Since delta_t = 0.5:
+            # step 0 -> (0+1)*0.5 = 0.5 -> "0:30"
+            # step 1 -> (1+1)*0.5 = 1.0 -> "1:00"
+            # step 47 -> (47+1)*0.5 = 24.0 -> "0:00" (represented as 0:00 or 24:00 in CSV)
+            total_minutes = int((hour + 1) * 30)
+            h = (total_minutes // 60) % 24
+            m = total_minutes % 60
+            time_key = f"{h}:{m:02d}"
+            
+            # Special case: 24:00 is often "0:00" in the CSV
+            if time_key == "0:00" and hour > 0:
+                pass # Already 0:00
+            
+            if time_key in self.hourly_mb_data:
+                params = self.hourly_mb_data[time_key]
+                A = params["A"]
+                B = params["B"]
+                return max(0.0, A - B * q)
+
+        # Fallback to exponential MB curve
         return self.mb_params.alpha * math.exp(-self.mb_params.beta * q)
     
     def compute_mc(self, quantity: float) -> float:
@@ -111,17 +151,8 @@ class EnergyAgent:
     
     def decide_action(self, obs: Observation) -> Action:
         """Heuristic decision-making based on observation.
-        
-        Logic:
-        1. Determine net energy position (inflexible load)
-        2. Decide battery action (charge/discharge/store)
-        3. Determine market quantity and role (buyer/seller)
-        4. Set price using MB/MC curves
-        5. Apply emergency bidding if near starvation
-        
-        Returns:
-            Action with order and battery decision.
         """
+        self._current_hour = obs.hour
         dt = self.config.delta_t
         inf_load = obs.inflexible_load  # positive=needs, negative=surplus
         bat_state = obs.battery_state
@@ -170,31 +201,35 @@ class EnergyAgent:
         
         # --- Step 3: Determine role and set price ---
         order = None
-        
+
         if market_quantity > 0.01:
-            # BUYER — needs to buy from market
-            bid_price = self.compute_mb(market_quantity)
-            
-            # Emergency bidding: if battery critically low
-            if self.battery.energy <= self.config.starvation_threshold + self.battery.capacity_min:
-                bid_price *= self.config.emergency_price_multiplier
-                is_emergency = True
-            else:
-                is_emergency = False
-            
-            order = Order(
-                agent_id=self.agent_id,
-                price=bid_price,
-                quantity=market_quantity,
-                is_buy=True,
-                is_emergency=is_emergency,
-            )
-        
+            # Agent needs energy — only CONSUMERS enter as buyers.
+            # Producers (PV owners) do NOT buy from the market:
+            # their deficit is absorbed by the battery or left as unmet.
+            if self.agent_type != "producer":
+                bid_price = self.compute_mb(market_quantity, hour=self._current_hour)
+
+                # Emergency bidding: if battery critically low
+                if self.battery.energy <= self.config.starvation_threshold + self.battery.capacity_min:
+                    bid_price *= self.config.emergency_price_multiplier
+                    is_emergency = True
+                else:
+                    is_emergency = False
+
+                order = Order(
+                    agent_id=self.agent_id,
+                    price=bid_price,
+                    quantity=market_quantity,
+                    is_buy=True,
+                    is_emergency=is_emergency,
+                )
+            # else: producer with deficit → no market order (relies on battery / unmet)
+
         elif market_quantity < -0.01:
-            # SELLER — has surplus to sell
+            # SELLER — has surplus to sell (both producers and consumers can sell)
             sell_quantity = abs(market_quantity)
             ask_price = self.compute_mc(sell_quantity)
-            
+
             order = Order(
                 agent_id=self.agent_id,
                 price=ask_price,
@@ -202,10 +237,11 @@ class EnergyAgent:
                 is_buy=False,
                 is_emergency=False,
             )
-        
+
         # else: market_quantity ≈ 0 → no market participation this hour
-        
+
         return Action(order=order, battery_charge=battery_action)
+
     
     def apply_battery_action(self, battery_charge: float, dt: float) -> float:
         """Execute the battery charge/discharge decision.
@@ -293,7 +329,7 @@ class EnergyAgent:
             return None
         q = self._auction_units_traded * self._auction_unit_size
         if self._auction_role == 'buyer':
-            return self.compute_mb(q)
+            return self.compute_mb(q, hour=self._current_hour)
         return self.compute_mc(q)
 
     def auction_initial_offer(self, margin: float) -> Optional[float]:
