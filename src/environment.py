@@ -235,16 +235,27 @@ class EnergyTradingEnv:
             # ────────────────────────────────────────────────────────────────
 
             # ── Order submission ─────────────────────────────────────────────
+            # We calculate a 'multiplier' to shift the agent's base curve 
+            # by their strategic decision (from Q-Learning or Baseline).
+            # This preserves the 'unit-by-unit' architecture while making
+            # actions effective in the market.
+            
             if order.is_buy:
+                # 1. Get base price at full quantity to find the multiplier
+                base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
+                multiplier = order.price / base_price if base_price > 1e-6 else 1.0
+                
                 # BUYERS: Every unit (0.5 kWh) is submitted as its own Order.
-                # Strictly diminishing prices (MB curve).
+                # Strictly diminishing prices (MB curve shifted by multiplier).
                 for k in range(n_units):
                     cum_qty    = k * unit_size
                     actual_qty = min(unit_size, order.quantity - cum_qty)
                     if actual_qty <= 1e-9:
                         break
                     
-                    u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
+                    raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
+                    u_price = float(np.clip(raw_u_price * multiplier, 0.001, 2.0))
+                    
                     ind_order = Order(
                         agent_id=agent.agent_id,
                         price=u_price,
@@ -255,9 +266,10 @@ class EnergyTradingEnv:
                     self.market.submit_order(ind_order)
                     unit_orders.append(ind_order)
             else:
-                # SELLERS: Single offer for total quantity at a single price (MC(0)).
-                # No curve, no units. Just "X kWh at Y price".
-                flat_price = agent.compute_mc(0.0)
+                # SELLERS: Currently using a flat price for total quantity.
+                # We use the agent's decided price (which includes their strategy).
+                flat_price = order.price
+                
                 agg_order = Order(
                     agent_id=agent.agent_id,
                     price=flat_price,
