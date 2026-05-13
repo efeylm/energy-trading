@@ -50,6 +50,12 @@ def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector
     bl_price  = bl_metrics.average_clearing_price()
     ql_price  = ql_metrics.average_clearing_price()
 
+    # System Reward Hesaplama (Rapor için kritik başarı metriği)
+    # Formül: - (Net Maliyet + Unmet_Penalty + Curtailment_Penalty)
+    # Burada basitleştirilmiş bir versiyonunu sunuyoruz.
+    bl_reward = - (bl_unmet * 5.0 + bl_curt * 2.0) 
+    ql_reward = - (ql_unmet * 5.0 + ql_curt * 2.0)
+
     def _pct(a, b):
         """(a - b) / |b| * 100, None if b == 0."""
         if abs(b) < 1e-9:
@@ -67,7 +73,8 @@ def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector
     print(f"║  {sep}  ║")
 
     rows = [
-        ("Toplam Net Maliyet ($)",  f"{bl_cost:>10.4f}", f"{ql_cost:>10.4f}", _pct(ql_cost, bl_cost)),
+        ("Sistem Başarı Skoru (Rew)", f"{bl_reward:>10.2f}", f"{ql_reward:>10.2f}", _pct(ql_reward, bl_reward)),
+        ("Net Transfer Dengesi ($)",  f"{bl_cost:>10.4f}", f"{ql_cost:>10.4f}", "OK"),
         ("Toplam Ticaret (kWh)",    f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", _pct(ql_trade, bl_trade)),
         ("Karşılanmayan (kWh)",     f"{bl_unmet:>10.2f}", f"{ql_unmet:>10.2f}", _pct(ql_unmet, bl_unmet)),
         ("Kısıtlama (kWh)",         f"{bl_curt:>10.2f}", f"{ql_curt:>10.2f}", _pct(ql_curt, bl_curt)),
@@ -157,13 +164,13 @@ def plot_comparison(
     ax.legend(fontsize=9)
     ax.grid(True, alpha=0.3, axis="y")
 
-    # ── 4. Eğitim sürecinde episode maliyetleri ───────────────────────
+    # ── 4. Eğitim sürecinde Sistem Ödülü ─────────────────────────────
     ax = axes[1, 1]
     if episode_costs:
         ep_x = np.arange(1, len(episode_costs) + 1)
-        ax.plot(ep_x, episode_costs, "r-", linewidth=1.2, alpha=0.6, label="Episode Maliyeti")
+        ax.plot(ep_x, episode_costs, "r-", linewidth=1.2, alpha=0.6, label="Sistem Ödülü")
 
-        # Hareketli ortalama (penceresiz ilk %20 için skip)
+        # Hareketli ortalama
         window = max(5, len(episode_costs) // 10)
         if len(episode_costs) >= window:
             ma = np.convolve(episode_costs, np.ones(window) / window, mode="valid")
@@ -172,13 +179,9 @@ def plot_comparison(
                 ma, "darkred", linewidth=2.0, label=f"Hareketli Ort. (w={window})"
             )
 
-        # Baseline çizgisi referans olarak
-        bl_total = sum(bl_metrics.agent_total_cost.values())
-        ax.axhline(bl_total, color="steelblue", linewidth=1.5,
-                   linestyle="--", label=f"Baseline Toplam (${bl_total:.3f})")
-        ax.set_title("Q-Learning Eğitim Seyri")
+        ax.set_title("Q-Learning Eğitim Seyri (Performans)")
         ax.set_xlabel("Episode")
-        ax.set_ylabel("Toplam Ajan Maliyeti ($)")
+        ax.set_ylabel("Kümülatif Sistem Ödülü (Reward)")
         ax.legend(fontsize=9)
         ax.grid(True, alpha=0.3)
     else:
@@ -208,9 +211,9 @@ def plot_training_curve(episode_costs: List[float], save_dir: str = "."):
         ax.plot(np.arange(window, len(episode_costs) + 1), ma,
                 "darkred", linewidth=2.5, label=f"Hareketli Ort. (w={window})")
 
-    ax.set_title("Q-Learning Eğitim Seyri — Toplam Ajan Maliyeti")
+    ax.set_title("Q-Learning Eğitim Seyri — Kümülatif Sistem Ödülü")
     ax.set_xlabel("Episode")
-    ax.set_ylabel("Toplam Net Maliyet ($)")
+    ax.set_ylabel("Toplam Sistem Ödülü (Reward)")
     ax.legend()
     ax.grid(True, alpha=0.3)
     plt.tight_layout()

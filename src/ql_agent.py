@@ -153,18 +153,18 @@ class QLearningAgent(EnergyAgent):
 
         order = None
         if net > 0.01:
-            # Buyer: adjusted bid price
-            base = self.compute_mb(net, hour=obs.hour)
-            bid_price = float(np.clip(base * multiplier, 0.001, 2.0))
+            # BUYER: Only use the raw MB curve price. 
+            # No strategic multiplier applied (as per "Only Sellers Learn" logic).
+            bid_price = self.compute_mb(net, hour=obs.hour)
             order = Order(
                 agent_id=self.agent_id,
-                price=bid_price,
+                price=float(np.clip(bid_price, 0.001, 2.0)),
                 quantity=net,
                 is_buy=True,
                 is_emergency=False,
             )
         elif net < -0.01:
-            # Seller: adjusted ask price
+            # SELLER: Apply Q-Learning multiplier to find the strategic ask price.
             base = self.compute_mc(abs(net))
             ask_price = float(np.clip(base * multiplier, 0.001, 2.0))
             order = Order(
@@ -187,7 +187,12 @@ class QLearningAgent(EnergyAgent):
         reward   : Scalar reward for the completed step.
         next_obs : Observation for the next step (None if terminal).
         """
-        if self._prev_state is None or self._prev_action_idx is None:
+        if self._prev_state is None or self._prev_action_idx is None or self._prev_obs is None:
+            return
+
+        # SADECE SATICIYKEN ÖĞREN: Eğer önceki adımda alıcıysak tabloyu güncelleme.
+        # Bu, ajanın sadece satış stratejilerini optimize etmesini sağlar.
+        if self._prev_obs.inflexible_load > 0:
             return
 
         s  = self._prev_state

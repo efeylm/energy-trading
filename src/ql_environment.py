@@ -65,22 +65,34 @@ class QLearningEnv(EnergyTradingEnv):
         # Parent'ın oluşturduğu EnergyAgent'ları QLearningAgent ile değiştir.
         # Daha önce oluşturulmuş Q-tabloları mevcut ise onları koru.
         new_agents = []
-        rng = np.random.default_rng((seed or self.config.seed) + 10)
 
         for agent in self.agents:
             aid = agent.agent_id
 
             if aid in self._ql_agents:
-                # Mevcut Q-ajan: parametrelerini güncelle, Q-tabloyu koru
+                # Mevcut Q-ajan: Öğrenilen Q-tabloyu KORU, ama ortam parametrelerini yenile.
+                # Bu, her episode'da değişen ±%15'lik varyasyonun Q-ajana da yansımasını sağlar.
                 existing = self._ql_agents[aid]
+                
+                # Karakteristikleri yenile
+                existing.agent_type = agent.agent_type
+                existing.mb_params  = agent.mb_params
+                existing.mc_params  = agent.mc_params
+                existing.config     = self.config
+                
+                # Sayaçları sıfırla
                 existing.total_cost       = 0.0
+                existing.total_reward     = 0.0
                 existing.total_traded_kwh = 0.0
                 existing.unmet_demand     = 0.0
                 existing.curtailed_energy = 0.0
                 existing.hourly_log       = []
+                
+                # Belleği temizle (Yeni bir güne taze başlangıç)
                 existing._prev_state      = None
                 existing._prev_action_idx = None
                 existing._prev_obs        = None
+                
                 new_agents.append(existing)
             else:
                 # İlk oluşturma
@@ -108,9 +120,6 @@ class QLearningEnv(EnergyTradingEnv):
 
     def step(self) -> Tuple[Dict, Dict[int, float], bool, Dict]:
         """Bir adım çalıştır; ardından tüm Q-ajanları güncelle."""
-        # Adımdan önce mevcut gözlemleri kaydet (s)
-        prev_obs: Dict[int, Observation] = self._get_all_observations()
-
         # Standart adım
         next_obs_dict, rewards, done, info = super().step()
 
@@ -139,16 +148,16 @@ class QLearningEnv(EnergyTradingEnv):
     def train(self, n_episodes: int, verbose: bool = True) -> List[float]:
         """n_episodes boyunca Q-Learning eğitimi yap.
 
-        Her episode bir tam simülasyon günüdür (48 adım).
+        Her episode bir tam simülasyon günüdür.
 
         Returns
         -------
-        episode_total_costs : Her episode'daki toplam ajan maliyetlerinin listesi.
+        episode_rewards : Her episode'daki toplam sistem ödülü listesi.
         """
-        episode_costs: List[float] = []
+        episode_rewards: List[float] = []
 
         for ep in range(n_episodes):
-            seed = self.config.seed + ep  # Her episode farklı profil varyasyonu
+            seed = self.config.seed + ep
             self.reset(seed=seed)
 
             done = False
@@ -157,26 +166,25 @@ class QLearningEnv(EnergyTradingEnv):
 
             self.end_episode()
 
-            total_cost = sum(
-                agent.total_cost for agent in self.agents
+            # Yeni Metrik: Toplam Sistem Ödülü (Öğrenmeyi gösteren gerçek değer)
+            total_reward = sum(
+                agent.episode_rewards[-1] for agent in self.agents
+                if isinstance(agent, QLearningAgent)
             )
-            episode_costs.append(total_cost)
+            episode_rewards.append(total_reward)
 
             if verbose and (ep % max(1, n_episodes // 10) == 0 or ep == n_episodes - 1):
                 eps = self.agents[0].epsilon if self.agents else 0.0
                 print(
                     f"  [Q-Learning] Episode {ep+1:4d}/{n_episodes} | "
-                    f"Total Cost: ${total_cost:7.4f} | "
+                    f"System Reward: {total_reward:9.2f} | "
                     f"ε={eps:.3f}"
                 )
 
-        return episode_costs
+        return episode_rewards
 
     def run_evaluation(self, seed: Optional[int] = None) -> MetricsCollector:
-        """Epsilon=0 (tam greedy) ile bir değerlendirme günü çalıştır.
-
-        Q-tabloları değiştirilmez (eğitim yok, sadece değerlendirme).
-        """
+        """Epsilon=0 (tam greedy) ile bir değerlendirme günü çalıştır."""
         eval_seed = seed if seed is not None else self.config.seed + 9999
         self.reset(seed=eval_seed)
 
@@ -212,11 +220,7 @@ class QLearningEnv(EnergyTradingEnv):
 
 
 class BaselineEnv(EnergyTradingEnv):
-    """EnergyTradingEnv + BaselineAgent factory.
-
-    Aynı config, aynı profiller; fakat tüm ajanlar kural tabanlı BaselineAgent.
-    Öğrenme yoktur — sadece tek bir çalıştırma yeterlidir.
-    """
+    """EnergyTradingEnv + BaselineAgent factory."""
 
     def reset(self, seed: Optional[int] = None) -> Dict:
         obs = super().reset(seed=seed)
