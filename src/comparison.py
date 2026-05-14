@@ -51,10 +51,12 @@ def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector
     ql_price  = ql_metrics.average_clearing_price()
 
     # System Reward Hesaplama (Rapor için kritik başarı metriği)
-    # Formül: - (Net Maliyet + Unmet_Penalty + Curtailment_Penalty)
-    # Burada basitleştirilmiş bir versiyonunu sunuyoruz.
     bl_reward = - (bl_unmet * 5.0 + bl_curt * 2.0) 
     ql_reward = - (ql_unmet * 5.0 + ql_curt * 2.0)
+
+    # Agent 0-3 üretici olduğu için onların negatif maliyetlerini topluyoruz
+    bl_seller_rev = sum(-bl_metrics.agent_total_cost[i] for i in range(4))
+    ql_seller_rev = sum(-ql_metrics.agent_total_cost[i] for i in range(4))
 
     def _pct(a, b):
         """(a - b) / |b| * 100, None if b == 0."""
@@ -74,6 +76,7 @@ def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector
 
     rows = [
         ("Sistem Başarı Skoru (Rew)", f"{bl_reward:>10.2f}", f"{ql_reward:>10.2f}", _pct(ql_reward, bl_reward)),
+        ("Toplam Satıcı Geliri ($)",   f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", _pct(ql_seller_rev, bl_seller_rev)),
         ("Net Transfer Dengesi ($)",  f"{bl_cost:>10.4f}", f"{ql_cost:>10.4f}", "OK"),
         ("Toplam Ticaret (kWh)",    f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", _pct(ql_trade, bl_trade)),
         ("Karşılanmayan (kWh)",     f"{bl_unmet:>10.2f}", f"{ql_unmet:>10.2f}", _pct(ql_unmet, bl_unmet)),
