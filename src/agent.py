@@ -10,6 +10,11 @@ Each agent:
 2. Decides: battery action (charge/discharge/store) + market order (price, quantity)
 3. Uses MB/MC curves to determine willingness to pay / minimum ask
 4. Has emergency bidding when battery drops below starvation threshold
+
+Faz 2 Reward (satıcı için):
+    reward = matched_qty × clearing_price + unmatched_qty × FiT
+Faz 2 Reward (alıcı için):
+    reward = -net_cost  (alıcı maliyet minimize eder)
 """
 
 from dataclasses import dataclass
@@ -65,6 +70,7 @@ class EnergyAgent:
         
         # Tracking
         self.total_cost = 0.0           # Cumulative energy cost ($)
+        self.total_reward = 0.0         # Cumulative reward
         self.total_traded_kwh = 0.0     # Cumulative traded energy
         self.unmet_demand = 0.0         # Cumulative unmet demand (kWh)
         self.curtailed_energy = 0.0     # Cumulative curtailed surplus (kWh)
@@ -220,9 +226,44 @@ class EnergyAgent:
         return max(0, self._auction_units_to_trade - self._auction_units_traded)
 
     def get_reward(self, hour: int) -> float:
-        if not self.hourly_log: return 0.0
+        """
+        Faz 2 Reward Fonksiyonu:
+
+        Satıcı (inflexible_load < 0 → net_load negatif):
+            reward = matched_qty × clearing_price + unmatched_qty × FiT
+            - Eşleşen enerji → piyasa fiyatından gelir
+            - Eşleşemeyen enerji → FiT taban fiyatından gelir (şebekeye ihracat)
+
+        Alıcı (inflexible_load > 0):
+            reward = -net_cost
+            - Alıcı maliyet minimize eder (negatif maliyet = iyi)
+
+        FiT değeri config'den alınır; config bağlantısı yoksa 0.06 $/kWh kullanılır.
+        """
+        if not self.hourly_log:
+            return 0.0
+
         last = self.hourly_log[-1]
-        return -last["net_cost"]
+        fit_price = getattr(self.config, "fit_price", 0.06)
+
+        # Satıcı mı?
+        # net_load negatif → sold_kwh > 0 veya curtailed > 0
+        sold_kwh    = last.get("sold_kwh", 0.0)
+        curtailed   = last.get("curtailed", 0.0)
+        sell_income = last.get("sell_income", 0.0)
+
+        is_seller = (sold_kwh + curtailed) > 1e-6
+
+        if is_seller:
+            # matched_qty × clearing_price + unmatched_qty × FiT
+            # sell_income = sold_kwh × clearing_price (ağırlıklı)
+            unmatched_reward = curtailed * fit_price
+            reward = sell_income + unmatched_reward
+        else:
+            # Alıcı: maliyet minimize (reward = -net_cost)
+            reward = -last["net_cost"]
+
+        return reward
     
     def __repr__(self) -> str:
         return f"EnergyAgent(id={self.agent_id}, type={self.agent_type}, cost={self.total_cost:.3f}$)"

@@ -1,22 +1,28 @@
 """
-Tabular Q-Learning Agent for P2P Energy Trading.
+Tabular Q-Learning Agent for P2P Energy Trading — Faz 2.
 
-State space: Discretized observation of (net_load_bin, hour_bin, price_bin)
-Action space: Price multiplier adjustments on top of MB/MC base price
+Hocanın Faz 2 spesifikasyonuna göre:
 
-Bu modül sadece Q-Learning mantığını içerir.
+State  : (saat_bucket, pv_bucket)
+         - saat_bucket : 3 ToU dönemi (gece/gün/akşam-tepe)
+         - pv_bucket   : 4 PV üretim seviyesi (hiç / az / orta / yüksek)
+         → 3 × 4 = 12 ayrık durum
+
+Action : FiT ile ToU arasında 7 ayrık fiyat seviyesi
+         price = FiT + a_idx / (N_ACTIONS-1) * (ToU - FiT)
+
+Reward : matched_qty × clearing_price + unmatched_qty × FiT
+         (Satıcı için: sattığı kWh × anlık fiyat + satamadığı kWh × taban FiT)
+
+Update : Q(s,a) ← Q(s,a) + α [r + γ·max Q(s',·) − Q(s,a)]
+         Sadece satıcı konumundayken (net_load < 0) öğrenilir.
+
+Bu modül yalnızca Q-Learning mantığını içerir.
 Baseline karşılaştırması için baseline_agent.py dosyasına bakınız.
-
-Design:
-- State: (net_load_bin, hour_bin, last_price_bin)  → 3D discrete table
-- Action: price_adjustment_index → multiplier applied to MB/MC base price
-- Reward: -net_cost_this_hour  (maximize revenue / minimize cost)
-- Update: Q(s,a) ← Q(s,a) + α [r + γ·max Q(s',·) − Q(s,a)]
 """
 
 from __future__ import annotations
 
-import math
 import numpy as np
 from typing import Optional, Tuple
 
@@ -26,46 +32,69 @@ from src.market import Order
 
 
 # ---------------------------------------------------------------------------
-# Discretisation helpers
+# State-space definition — Faz 2 spesifikasyonu
 # ---------------------------------------------------------------------------
 
-def _bin(value: float, edges: np.ndarray) -> int:
-    """Return the bin index for *value* given monotone *edges* (len N → N-1 bins)."""
-    return int(np.clip(np.searchsorted(edges, value, side="right") - 1, 0, len(edges) - 2))
+# Saat dilimleri (ToU dönemleri): 3 kova
+# 0 = Gece/off-peak  (0–8, 20–24 → step 0–16, 40–47)
+# 1 = Güneş/mid      (8–17 → step 16–34)
+# 2 = Akşam tepe     (17–20 → step 34–40)
+def _hour_bucket(hour_step: int) -> int:
+    """
+    48 adımlık simülasyonu (her adım 0.5h) ToU dönemlerine ayırır.
+    0 = gece/off-peak, 1 = gündüz (güneş), 2 = akşam tepe
+    """
+    real_hour = (hour_step * 0.5) % 24
+    if 8.0 <= real_hour < 17.0:
+        return 1  # Gündüz / güneş saatleri
+    elif 17.0 <= real_hour < 20.0:
+        return 2  # Akşam tepe yükü
+    else:
+        return 0  # Gece / off-peak
 
 
-# State-space edges — these define the resolution of the Q-table.
-# Net load (kWh): negative = surplus producer, positive = deficit consumer
-NET_LOAD_EDGES = np.array([-10.0, -4.0, -1.0, 0.0, 1.0, 4.0, 10.0])   # 6 bins
-# Hour of day edges (0-47 steps, mapped to 0-24 h)
-HOUR_EDGES      = np.array([0, 8, 16, 24, 32, 40, 48])                  # 6 bins
-# Last average price ($/kWh)
-PRICE_EDGES     = np.array([0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 1.0])  # 6 bins
+# PV üretim seviyeleri: 4 kova
+# Negatif net_load = fazla üretim (PV fazlası)
+PV_EDGES = np.array([0.0, 1.0, 3.0, 6.0, 20.0])   # 4 bin: [0,1), [1,3), [3,6), [6,+)
 
-N_NET_LOAD = len(NET_LOAD_EDGES) - 1  # 6
-N_HOUR     = len(HOUR_EDGES)     - 1  # 6
-N_PRICE    = len(PRICE_EDGES)    - 1  # 6
+def _pv_bucket(surplus_kwh: float) -> int:
+    """
+    PV fazlası (kWh) değerini 4 kovaya ayırır.
+    surplus_kwh = abs(inflexible_load) when net_load < 0
+    """
+    return int(np.clip(np.searchsorted(PV_EDGES, surplus_kwh, side="right") - 1, 0, len(PV_EDGES) - 2))
 
-# Action space: price multipliers applied to the MB/MC base price
-# Values < 1.0 → underbid / underask  (aggressive)
-# Values > 1.0 → overbid / overask    (conservative)
-PRICE_MULTIPLIERS = np.array([0.70, 0.85, 1.00, 1.15, 1.30])
-N_ACTIONS = len(PRICE_MULTIPLIERS)  # 5
 
+N_HOUR_BUCKETS = 3   # ToU dönemi sayısı
+N_PV_BUCKETS   = 4   # PV seviye sayısı
+# Toplam durum sayısı: 3 × 4 = 12
+
+# ---------------------------------------------------------------------------
+# Action space — FiT ile ToU arasında ayrık fiyat seviyeleri
+# ---------------------------------------------------------------------------
+# Fiyatlar runtime'da config'den hesaplanır; burada sadece indeks sayısı sabit.
+N_ACTIONS = 7   # Hocanın "5–10 ayrık" tavsiyesinin ortası
+
+
+def _action_prices(fit: float, tou: float) -> np.ndarray:
+    """FiT ile ToU arasında N_ACTIONS eşit aralıklı fiyat dizisi döner."""
+    return np.linspace(fit, tou, N_ACTIONS)
+
+
+# ---------------------------------------------------------------------------
+# Q-Learning Agent
+# ---------------------------------------------------------------------------
 
 class QLearningAgent(EnergyAgent):
-    """Tabular Q-Learning energy trading agent.
+    """
+    Tabular Q-Learning enerji ticareti ajansı — Faz 2.
 
-    Extends EnergyAgent but overrides decide_action() to use a
-    learned Q-table instead of the raw MB/MC heuristic.
+    State  : (saat_bucket, pv_bucket) — 3 × 4 = 12 durum
+    Action : FiT–ToU arasında 7 fiyat seviyesi
+    Reward : matched_qty × clearing_price + unmatched_qty × FiT
 
-    Parameters
-    ----------
-    alpha_lr   : Q-learning step size (learning rate)
-    gamma      : Discount factor
-    epsilon    : Initial ε for ε-greedy exploration
-    epsilon_min: Minimum ε (floor after decay)
-    epsilon_decay: Multiplicative decay applied after each episode (day)
+    Sadece satıcı konumundayken (net_load < 0) Q-tablosu güncellenir.
+    Alıcı konumundayken (net_load > 0) heuristic MB fiyatı kullanılır.
     """
 
     def __init__(
@@ -89,18 +118,22 @@ class QLearningAgent(EnergyAgent):
         self.epsilon_min   = epsilon_min
         self.epsilon_decay = epsilon_decay
 
-        # Q-table: shape (N_NET_LOAD, N_HOUR, N_PRICE, N_ACTIONS)
-        # Initialised to small optimistic values to encourage exploration
+        # Tariff referans fiyatları (config'den)
+        self.fit_price: float = config.fit_price
+        self.tou_price: float = config.tou_price
+
+        # Q-table: shape (N_HOUR_BUCKETS, N_PV_BUCKETS, N_ACTIONS)
+        # Başlangıçta sıfır; optimistik başlangıç gerekmiyor (reward pozitif)
         self.q_table: np.ndarray = np.zeros(
-            (N_NET_LOAD, N_HOUR, N_PRICE, N_ACTIONS), dtype=np.float64
+            (N_HOUR_BUCKETS, N_PV_BUCKETS, N_ACTIONS), dtype=np.float64
         )
 
-        # Transition memory for single-step update
-        self._prev_state: Optional[Tuple[int, int, int]] = None
+        # Tek adım geçiş belleği
+        self._prev_state: Optional[Tuple[int, int]] = None
         self._prev_action_idx: Optional[int] = None
         self._prev_obs: Optional[Observation] = None
 
-        # Episode statistics
+        # Episode istatistikleri
         self.episode_rewards: list[float] = []
         self._episode_reward_acc: float = 0.0
 
@@ -108,53 +141,48 @@ class QLearningAgent(EnergyAgent):
     # State encoding
     # ------------------------------------------------------------------
 
-    def _encode_state(self, obs: Observation) -> Tuple[int, int, int]:
-        """Map a continuous Observation into a discrete (s0, s1, s2) tuple."""
-        s0 = _bin(obs.inflexible_load, NET_LOAD_EDGES)
-        s1 = _bin(float(obs.hour),     HOUR_EDGES)
-        s2 = _bin(obs.last_avg_price,  PRICE_EDGES)
-        return s0, s1, s2
+    def _encode_state(self, obs: Observation) -> Tuple[int, int]:
+        """Sürekli gözlemi (saat_bucket, pv_bucket) çiftine dönüştürür."""
+        s0 = _hour_bucket(obs.hour)
+        surplus = max(0.0, -obs.inflexible_load)   # net_load < 0 → PV fazlası
+        s1 = _pv_bucket(surplus)
+        return s0, s1
 
     # ------------------------------------------------------------------
     # Policy
     # ------------------------------------------------------------------
 
-    def _select_action(self, state: Tuple[int, int, int]) -> int:
-        """ε-greedy action selection."""
+    def _select_action(self, state: Tuple[int, int]) -> int:
+        """ε-greedy aksiyon seçimi."""
         if np.random.random() < self.epsilon:
             return np.random.randint(N_ACTIONS)
         return int(np.argmax(self.q_table[state]))
 
-    def _base_price(self, obs: Observation) -> float:
-        """MB/MC base price (same logic as parent heuristic)."""
-        net = obs.inflexible_load
-        if net > 0.0:
-            return self.compute_mb(net, hour=obs.hour)
-        else:
-            return self.compute_mc(abs(net))
+    def _ask_price_from_action(self, action_idx: int) -> float:
+        """Aksiyon indeksini $/kWh satış fiyatına çevirir."""
+        prices = _action_prices(self.fit_price, self.tou_price)
+        return float(prices[action_idx])
 
     # ------------------------------------------------------------------
     # Core overrides
     # ------------------------------------------------------------------
 
     def decide_action(self, obs: Observation) -> Action:
-        """Select action using learned Q-table with ε-greedy exploration."""
+        """Q-tablosu kullanarak ε-greedy aksiyon seç."""
         self._current_hour = obs.hour
         state = self._encode_state(obs)
         action_idx = self._select_action(state)
 
-        # Store for Q-update after reward is received
+        # Geçiş belleğine kaydet (Q-update için)
         self._prev_state = state
         self._prev_action_idx = action_idx
         self._prev_obs = obs
 
         net = obs.inflexible_load
-        multiplier = PRICE_MULTIPLIERS[action_idx]
-
         order = None
+
         if net > 0.01:
-            # BUYER: Only use the raw MB curve price. 
-            # No strategic multiplier applied (as per "Only Sellers Learn" logic).
+            # ALICI: Öğrenme yok — ham MB eğrisi fiyatı kullanılır (Faz 1 mantığı)
             bid_price = self.compute_mb(net, hour=obs.hour)
             order = Order(
                 agent_id=self.agent_id,
@@ -164,12 +192,11 @@ class QLearningAgent(EnergyAgent):
                 is_emergency=False,
             )
         elif net < -0.01:
-            # SELLER: Apply Q-Learning multiplier to find the strategic ask price.
-            base = self.compute_mc(abs(net))
-            ask_price = float(np.clip(base * multiplier, 0.001, 2.0))
+            # SATICI: Q-tablosundan gelen fiyat seviyesini kullan
+            ask_price = self._ask_price_from_action(action_idx)
             order = Order(
                 agent_id=self.agent_id,
-                price=ask_price,
+                price=float(np.clip(ask_price, 0.001, 2.0)),
                 quantity=abs(net),
                 is_buy=False,
                 is_emergency=False,
@@ -178,35 +205,35 @@ class QLearningAgent(EnergyAgent):
         return Action(order=order)
 
     def update_q(self, reward: float, next_obs: Optional[Observation]):
-        """Apply Q-learning update after observing reward and next state.
+        """
+        Q-öğrenme güncellemesi — reward gözlemlendikten sonra çağrılır.
 
-        Called externally by the training loop (QLearningEnv) once per step.
+        Faz 2 reward formülü:
+            reward = matched_qty × clearing_price + unmatched_qty × FiT
+        Bu hesaplama environment.py'de process_trade_results + get_reward
+        üzerinden gelir; burada sadece Q-update yapılır.
 
-        Parameters
-        ----------
-        reward   : Scalar reward for the completed step.
-        next_obs : Observation for the next step (None if terminal).
+        Sadece satıcı konumundayken (net_load < 0) tabloyu günceller.
         """
         if self._prev_state is None or self._prev_action_idx is None or self._prev_obs is None:
             return
 
-        # SADECE SATICIYKEN ÖĞREN: Eğer önceki adımda alıcıysak tabloyu güncelleme.
-        # Bu, ajanın sadece satış stratejilerini optimize etmesini sağlar.
+        # Sadece satıcıyken öğren (Faz 2: "satıcı öğrenir")
         if self._prev_obs.inflexible_load > 0:
             return
 
-        s  = self._prev_state
-        a  = self._prev_action_idx
+        s = self._prev_state
+        a = self._prev_action_idx
 
-        # Bootstrap from next state
+        # Sonraki durum için bootstrap
         if next_obs is not None:
             s_next = self._encode_state(next_obs)
             max_q_next = float(np.max(self.q_table[s_next]))
         else:
             max_q_next = 0.0
 
-        # Q-update rule
-        current_q = self.q_table[s][a]
+        # Q-update: Q(s,a) ← Q(s,a) + α [r + γ·max Q(s',·) − Q(s,a)]
+        current_q  = self.q_table[s][a]
         td_target  = reward + self.gamma * max_q_next
         td_error   = td_target - current_q
         self.q_table[s][a] += self.alpha_lr * td_error
@@ -214,12 +241,12 @@ class QLearningAgent(EnergyAgent):
         self._episode_reward_acc += reward
 
     def end_episode(self):
-        """Call at the end of each simulation day to decay ε and log reward."""
+        """Episode sonu: ε decay ve reward kaydı."""
         self.episode_rewards.append(self._episode_reward_acc)
         self._episode_reward_acc = 0.0
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
-        # Reset transition memory
+        # Geçiş belleğini sıfırla
         self._prev_state      = None
         self._prev_action_idx = None
         self._prev_obs        = None
@@ -229,7 +256,7 @@ class QLearningAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def q_table_stats(self) -> dict:
-        """Return summary statistics for the Q-table (useful for debugging)."""
+        """Q-tablosu için özet istatistikler döner."""
         return {
             "mean":    float(np.mean(self.q_table)),
             "std":     float(np.std(self.q_table)),
@@ -239,8 +266,14 @@ class QLearningAgent(EnergyAgent):
         }
 
     def greedy_policy_summary(self) -> np.ndarray:
-        """Return the greedy action index for each state (3-D array)."""
+        """Her durum için greedy aksiyon indeksini döner (2-D array: saat × PV)."""
         return np.argmax(self.q_table, axis=-1)
+
+    def greedy_policy_prices(self) -> np.ndarray:
+        """Her durum için greedy aksiyonun $/kWh fiyatını döner."""
+        idx_grid = self.greedy_policy_summary()
+        prices = _action_prices(self.fit_price, self.tou_price)
+        return prices[idx_grid]
 
     def __repr__(self) -> str:
         return (

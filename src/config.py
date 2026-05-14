@@ -75,6 +75,14 @@ class SimConfig:
     # --- Data Paths ---
     mb_data_path: str = "src/data/mb_hourly_params.json"
 
+    # --- Faz 2: Tariff reference prices for Q-Learning reward ---
+    # FiT (Feed-in Tariff): minimum guaranteed price for exported energy ($/kWh)
+    # Sellers receive this even if unmatched in the P2P market.
+    fit_price: float = 0.06   # ~6 cent/kWh (typical AU/EU FiT)
+    # ToU (Time-of-Use): maximum retail grid price a buyer would pay ($/kWh)
+    # Sellers can price up to ToU since buyers save vs. grid.
+    tou_price: float = 0.28   # ~28 cent/kWh (typical peak ToU rate)
+
     @property
     def n_agents(self) -> int:
         return self.n_producers + self.n_consumers
