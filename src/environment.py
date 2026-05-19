@@ -296,14 +296,17 @@ class EnergyTradingEnv:
         clearing_result: PartialClearingResult = self.market.clear_period()
 
         # Build pending lookup: agent_id → remaining unmatched quantity
-        pending_buy_qty: Dict[int, float] = {
-            po.agent_id: po.remaining_quantity
-            for po in clearing_result.pending_buy_orders
-        }
-        pending_sell_qty: Dict[int, float] = {
-            po.agent_id: po.remaining_quantity
-            for po in clearing_result.pending_sell_orders
-        }
+        # (Buyers submit one order per unit; sum all pending rows per agent.)
+        pending_buy_qty: Dict[int, float] = {}
+        for po in clearing_result.pending_buy_orders:
+            pending_buy_qty[po.agent_id] = (
+                pending_buy_qty.get(po.agent_id, 0.0) + po.remaining_quantity
+            )
+        pending_sell_qty: Dict[int, float] = {}
+        for po in clearing_result.pending_sell_orders:
+            pending_sell_qty[po.agent_id] = (
+                pending_sell_qty.get(po.agent_id, 0.0) + po.remaining_quantity
+            )
 
         # Print per-trade info (mirrors the old iterative auction verbose output)
         for t in clearing_result.trades:
