@@ -91,23 +91,13 @@ class BaselineAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def _buyer_price(self, quantity: float, hour: int) -> float:
-        """Alıcı teklif fiyatı: MB × hour_factor × (1 + buyer_margin)"""
-        base  = self.compute_mb(quantity, hour=hour)
-        hf    = _hour_factor(hour)
-        price = base * hf * (1.0 + self.buyer_margin)
+        """Alıcı teklif fiyatı: MB (Marginal Benefit) eğrisindeki formüle göre."""
+        price = self.compute_mb(quantity, hour=hour)
         return float(np.clip(price, 0.001, 2.0))
 
-    def _seller_price(self, quantity: float, hour: int) -> float:
-        """Satıcı istek fiyatı: MC × hour_factor × (1 − seller_margin)
-
-        hour_factor < 1 (arz bolluğu saatleri) → satıcı fiyatı düşer (rekabetçi)
-        hour_factor > 1 (kıtlık saatleri)      → satıcı fiyatı artar
-        """
-        base  = self.compute_mc(quantity)
-        hf    = _hour_factor(hour)
-        # Güneş doruk saatlerinde (hf < 1) arz fazla → satıcı fiyatını düşürür
-        # Akşam/sabah tepe saatlerinde (hf > 1) arz az → satıcı fiyatını artırır
-        price = base * hf * (1.0 - self.seller_margin)
+    def _seller_price(self, quantity: float) -> float:
+        """Satıcı istek fiyatı: Use-It-or-Lose-It (UILI) üstel formülüne göre."""
+        price = self.compute_uili_price(quantity)
         return float(np.clip(price, 0.001, 2.0))
 
     # ------------------------------------------------------------------
@@ -124,7 +114,7 @@ class BaselineAgent(EnergyAgent):
         order = None
 
         if net > 0.01:
-            # Alıcı konumunda: fiyat × hour_factor
+            # Alıcı konumunda: MB eğrisi fiyatı
             bid_price = self._buyer_price(net, obs.hour)
             order = Order(
                 agent_id=self.agent_id,
@@ -134,8 +124,8 @@ class BaselineAgent(EnergyAgent):
                 is_emergency=False,
             )
         elif net < -0.01:
-            # Satıcı konumunda: saate göre rekabetçi fiyat
-            ask_price = self._seller_price(abs(net), obs.hour)
+            # Satıcı konumunda: Use-It-or-Lose-It (UILI) fiyatı
+            ask_price = self._seller_price(abs(net))
             order = Order(
                 agent_id=self.agent_id,
                 price=ask_price,
