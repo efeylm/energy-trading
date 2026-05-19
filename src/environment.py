@@ -308,7 +308,7 @@ class EnergyTradingEnv:
         # Print per-trade info (mirrors the old iterative auction verbose output)
         for t in clearing_result.trades:
             print(
-                f"    TRADE  A{t.buyer_id}(bid={t.buyer_bid:.4f}) ↔ "
+                f"    TRADE  A{t.buyer_id}(bid={t.buyer_bid:.4f}) <-> "
                 f"A{t.seller_id}(ask={t.seller_ask:.4f}) "
                 f"qty={t.quantity:.3f} kWh @ ${t.price:.4f}/kWh"
             )

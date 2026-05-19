@@ -30,9 +30,15 @@ def extract_mb_parameters(data_path, customer_id, max_price=0.25, min_price=0.05
     mb_params = {}
     for time_str, q_max in q_max_profile.items():
         safe_q_max = max(0.1, q_max) 
-        A = max_price
-        B = (max_price - min_price) / safe_q_max
-        mb_params[time_str] = {"A": round(A, 4), "B": round(B, 4), "Q_max": round(q_max, 4)}
+        alpha = max_price
+        # alpha * exp(-beta * safe_q_max) = min_price
+        # => beta = -ln(min_price / alpha) / safe_q_max
+        beta = -np.log(min_price / max_price) / safe_q_max
+        mb_params[time_str] = {
+            "alpha": round(alpha, 4),
+            "beta": round(beta, 4),
+            "Q_max": round(q_max, 4)
+        }
     
     return mb_params
 
@@ -44,10 +50,19 @@ if __name__ == "__main__":
     customers = [1, 2, 3, 4]
     agent_ids = [4, 5, 6, 7]
     
+    first_params = None
     for cust_id, agent_id in zip(customers, agent_ids):
         params = extract_mb_parameters(DATA_FILE, customer_id=cust_id)
         if params:
+            if first_params is None:
+                first_params = params
             out_file = f"src/data/mb_agent_{agent_id}.json"
             with open(out_file, 'w') as f:
                 json.dump(params, f, indent=4)
             print(f"Agent {agent_id} (Customer {cust_id}) MB parametreleri kaydedildi.")
+            
+    if first_params:
+        out_file = "src/data/mb_hourly_params.json"
+        with open(out_file, 'w') as f:
+            json.dump(first_params, f, indent=4)
+        print("Global mb_hourly_params.json başarıyla kaydedildi.")

@@ -99,7 +99,7 @@ class EnergyAgent:
         self._current_hour: int = 0
     
     def compute_mb(self, quantity: float, hour: Optional[int] = None) -> float:
-        """Marginal Benefit: MB(q) = A - B * q (Linear from Data)"""
+        """Marginal Benefit: MB(q) = alpha * exp(-beta * q) (Exponential)"""
         q = max(0.0, quantity)
         if hour is not None:
             total_minutes = int((hour + 1) * 30)
@@ -108,7 +108,9 @@ class EnergyAgent:
             time_key = f"{h}:{m:02d}"
             if time_key in self.hourly_mb_data:
                 params = self.hourly_mb_data[time_key]
-                return max(0.0, params["A"] - params["B"] * q)
+                alpha = params.get("alpha", self.mb_params.alpha)
+                beta = params.get("beta", self.mb_params.beta)
+                return alpha * math.exp(-beta * q)
         return self.mb_params.alpha * math.exp(-self.mb_params.beta * q)
     
     def compute_mc(self, quantity: float) -> float:

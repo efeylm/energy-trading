@@ -4,7 +4,7 @@ Main entry point for the P2P Energy Trading Simulation.
 Runs a 24-hour simulation day and generates visualization plots:
 1. Hourly average clearing price
 2. Hourly trading volume
-3. Battery SoC timeseries for all agents
+3. Battery SoC timeseries for all agents (bu artık yok battery sistemi kaldırıldı)
 4. Agent energy bills (bar chart)
 5. Hourly unmet demand and curtailment
 6. PV generation and load demand profiles
