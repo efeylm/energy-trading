@@ -83,6 +83,13 @@ class SimConfig:
     # Sellers can price up to ToU since buyers save vs. grid.
     tou_price: float = 0.28   # ~28 cent/kWh (typical peak ToU rate)
 
+    # --- Use-It-or-Lose-It (UILI) seller pricing ---
+    # P(Q) = FiT + (ToU - FiT) * exp(-lambda_uili * Q)
+    # At Q=0  → price = ToU  (maximum, no production pressure)
+    # At Q→∞  → price → FiT (floor, high production forces cheap bids)
+    # Higher lambda_uili = faster price decay with quantity.
+    lambda_uili: float = 0.2   # decay rate (1/kWh); tune per scenario
+
     @property
     def n_agents(self) -> int:
         return self.n_producers + self.n_consumers

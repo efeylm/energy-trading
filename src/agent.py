@@ -117,6 +117,25 @@ class EnergyAgent:
         """Marginal Cost: MC(q) = gamma * q + delta"""
         q = max(0.0, quantity)
         return self.mc_params.gamma * q + self.mc_params.delta
+
+    def compute_uili_price(self, quantity: float) -> float:
+        """Use-It-or-Lose-It (UILI) seller pricing.
+
+        Ters exponential fiyat modeli — üretim miktarıyla fiyat düşer:
+
+            P(Q) = FiT + (ToU - FiT) * exp(-lambda * Q)
+
+        - Q = 0  → P = ToU  (hiç üretim baskısı yok, maksimum fiyat)
+        - Q → ∞  → P → FiT  (yüksek üretim baskısı, taban fiyata yaklaşır)
+
+        Satıcı çok ürettiğinde fiyatını düşürmek zorunda kalır;
+        aksi hâlde eşleşemeyip FiT'ten bile daha az kazanır.
+        """
+        q = max(0.0, quantity)
+        fit = getattr(self.config, "fit_price", 0.06)
+        tou = getattr(self.config, "tou_price", 0.28)
+        lam = getattr(self.config, "lambda_uili", 0.4)
+        return fit + (tou - fit) * math.exp(-lam * q)
     
     def decide_action(self, obs: Observation) -> Action:
         """Heuristic decision-making based on net energy position."""
@@ -136,9 +155,10 @@ class EnergyAgent:
                     is_emergency=False,
                 )
         elif market_quantity < -0.01:
-            # SELLER - Agent has surplus
+            # SELLER - Agent has surplus → Use-It-or-Lose-It pricing
+            # Fiyat üretim miktarıyla ters orantılı: çok üretim → ucuz fiyat
             sell_quantity = abs(market_quantity)
-            ask_price = self.compute_mc(sell_quantity)
+            ask_price = self.compute_uili_price(sell_quantity)
             order = Order(
                 agent_id=self.agent_id,
                 price=ask_price,
@@ -197,7 +217,8 @@ class EnergyAgent:
         q = self._auction_units_traded * self._auction_unit_size
         if self._auction_role == 'buyer':
             return self.compute_mb(q, hour=self._current_hour)
-        return self.compute_mc(q)
+        # UILI: seller reservation price = UILI curve at cumulative qty traded so far
+        return self.compute_uili_price(q)
 
     def auction_initial_offer(self, margin: float) -> Optional[float]:
         v = self.auction_valuation()
