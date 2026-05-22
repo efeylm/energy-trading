@@ -268,6 +268,7 @@ class EnergyAgent:
 
         last = self.hourly_log[-1]
         fit_price = getattr(self.config, "fit_price", 0.06)
+        beta      = getattr(self.config, "reward_beta", 0.0)
 
         # Satıcı mı?
         # net_load negatif → sold_kwh > 0 veya curtailed > 0
@@ -278,10 +279,18 @@ class EnergyAgent:
         is_seller = (sold_kwh + curtailed) > 1e-6
 
         if is_seller:
-            # matched_qty × clearing_price + unmatched_qty × FiT
-            # sell_income = sold_kwh × clearing_price (ağırlıklı)
-            unmatched_reward = curtailed * fit_price
+            # Temel reward: matched_qty × clearing_price + unmatched_qty × curtail_rate
+            # curtail_rate = 0.0 → satamadıysan sıfır kazanırsın (eski: FiT=+$0.06)
+            curtail_rate  = getattr(self.config, "reward_curtail_rate", 0.0)
+            unmatched_reward = curtailed * curtail_rate
             reward = sell_income + unmatched_reward
+
+            # β fiyat primi: FiT üzerinde satılan her kWh için ekstra ödül
+            # Bu terim ajana "fiyatı gereksiz yere düşürme" sinyali verir.
+            # price_premium = sold_kwh × (avg_clearing_price - FiT)
+            if beta > 0.0 and sold_kwh > 1e-6:
+                price_premium = sell_income - sold_kwh * fit_price
+                reward += beta * price_premium
         else:
             # Alıcı: maliyet minimize (reward = -net_cost)
             reward = -last["net_cost"]

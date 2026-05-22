@@ -299,6 +299,14 @@ if __name__ == "__main__":
         "--lambdas", type=float, nargs="+", default=_DEFAULT_LAMBDAS,
         help="Lambda_UILI sweep değerleri (varsayılan: 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50)",
     )
+    parser.add_argument(
+        "--beta", type=float, default=0.3,
+        help="Reward fiyat primi katsayisi β (varsayılan: 0.3, 0.0 = orijinal formül)",
+    )
+    parser.add_argument(
+        "--curtail-rate", type=float, default=0.0,
+        help="Satılamayan enerji ödül oranı (varsayılan: 0.0 | eski: 0.06=FiT | negatif=ceza)",
+    )
     args = parser.parse_args()
 
     summary_path = os.path.join(args.save_dir, "simulation_summary_log.txt")
@@ -308,6 +316,7 @@ if __name__ == "__main__":
         top_header = (
             f"\n{'='*60}\n"
             f"{'HYPERPARAMETER SEARCH RESULTS: LAMBDA_UILI':^60}\n"
+            f"  beta={args.beta:.2f}  |  curtail_rate={args.curtail_rate:.2f}  |  episodes={args.episodes}\n"
             f"{'='*60}\n"
         )
         print(top_header, end="")
@@ -326,7 +335,8 @@ if __name__ == "__main__":
             lam_dir = os.path.join(args.save_dir, lam_tag)
             os.makedirs(lam_dir, exist_ok=True)
 
-            cfg = SimConfig(lambda_uili=lam)
+            cfg = SimConfig(lambda_uili=lam, reward_beta=args.beta,
+                            reward_curtail_rate=args.curtail_rate)
             run_comparison(cfg, n_episodes=args.episodes, save_dir=lam_dir,
                            verbose=False, summary_file=sf)
 
