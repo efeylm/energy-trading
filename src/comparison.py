@@ -37,7 +37,7 @@ def _safe_avg(arr: np.ndarray) -> float:
     return float(np.mean(valid)) if len(valid) > 0 else 0.0
 
 
-def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector):
+def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector, file=None):
     """Konsola yan yana karşılaştırma tablosu yazdır."""
     bl_cost   = sum(bl_metrics.agent_total_cost.values())
     ql_cost   = sum(ql_metrics.agent_total_cost.values())
@@ -65,30 +65,34 @@ def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector
         return f"{(a - b) / abs(b) * 100:+.1f}%"
 
     width = 54
-    sep   = "─" * width
+    sep   = "-" * width
 
-    print()
-    print("╔" + "═" * width + "╗")
-    print(f"║{'  KARŞILAŞTIRMA: Q-LEARNING vs BASELINE':^{width}}║")
-    print("╠" + "═" * width + "╣")
-    print(f"║  {'Metrik':<26} {'Baseline':>10} {'Q-Learn':>10}  ║")
-    print(f"║  {sep}  ║")
+    def _w(line: str = ""):
+        """Hem terminale hem özet dosyasına yaz."""
+        print(line)
+        if file is not None:
+            file.write(line + "\n")
 
     rows = [
-        ("Sistem Başarı Skoru (Rew)", f"{bl_reward:>10.2f}", f"{ql_reward:>10.2f}", _pct(ql_reward, bl_reward)),
-        ("Toplam Satıcı Geliri ($)",   f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", _pct(ql_seller_rev, bl_seller_rev)),
+        ("Sistem Basari Skoru (Rew)", f"{bl_reward:>10.2f}", f"{ql_reward:>10.2f}", _pct(ql_reward, bl_reward)),
+        ("Toplam Satici Geliri ($)",   f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", _pct(ql_seller_rev, bl_seller_rev)),
         ("Net Transfer Dengesi ($)",  f"{bl_cost:>10.4f}", f"{ql_cost:>10.4f}", "OK"),
-        ("Toplam Ticaret (kWh)",    f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", _pct(ql_trade, bl_trade)),
-        ("Karşılanmayan (kWh)",     f"{bl_unmet:>10.2f}", f"{ql_unmet:>10.2f}", _pct(ql_unmet, bl_unmet)),
-        ("Kısıtlama (kWh)",         f"{bl_curt:>10.2f}", f"{ql_curt:>10.2f}", _pct(ql_curt, bl_curt)),
-        ("Ort. Takas Fiyatı ($/kWh)", f"{bl_price:>10.4f}", f"{ql_price:>10.4f}", _pct(ql_price, bl_price)),
+        ("Toplam Ticaret (kWh)",      f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", _pct(ql_trade, bl_trade)),
+        ("Karsilanmayan (kWh)",       f"{bl_unmet:>10.2f}", f"{ql_unmet:>10.2f}", _pct(ql_unmet, bl_unmet)),
+        ("Kisitlama (kWh)",           f"{bl_curt:>10.2f}", f"{ql_curt:>10.2f}", _pct(ql_curt, bl_curt)),
+        ("Ort. Takas Fiyati ($/kWh)", f"{bl_price:>10.4f}", f"{ql_price:>10.4f}", _pct(ql_price, bl_price)),
     ]
 
+    _w()
+    _w("+" + "-" * width + "+")
+    _w(f"|{'  KARSILASTIRMA: Q-LEARNING vs BASELINE':^{width}}|")
+    _w("+" + "-" * width + "+")
+    _w(f"|  {'Metrik':<26} {'Baseline':>10} {'Q-Learn':>10}  |")
+    _w(f"|  {sep}  |")
     for label, bv, qv, delta in rows:
-        print(f"║  {label:<26} {bv} {qv}  [{delta}]  ║")
-
-    print("╚" + "═" * width + "╝")
-    print()
+        _w(f"|  {label:<26} {bv} {qv}  [{delta}]  |")
+    _w("+" + "-" * width + "+")
+    _w()
 
 
 # ---------------------------------------------------------------------------
@@ -233,9 +237,10 @@ def plot_training_curve(episode_costs: List[float], save_dir: str = "."):
 
 def run_comparison(
     config: SimConfig,
-    n_episodes: int = 100,
+    n_episodes: int = 400,
     save_dir: str = ".",
     verbose: bool = True,
+    summary_file=None,
 ) -> Tuple:
     """Tam karşılaştırma pipeline'ını çalıştır.
 
@@ -251,40 +256,78 @@ def run_comparison(
     from typing import Tuple
 
     # ── 1. Baseline ──────────────────────────────────────────────────
-    print("\n" + "━" * 60)
-    print("  ADIM 1/3 — Baseline (Kural Tabanlı) Çalıştırılıyor")
-    print("━" * 60)
+    if verbose:
+        print("\n" + "=" * 60)
+        print("  ADIM 1/3 — Baseline (Kural Tabanlı) Çalıştırılıyor")
+        print("=" * 60)
     bl_env = BaselineEnv(config)
-    bl_metrics = bl_env.run_baseline(seed=config.seed)
+    bl_metrics = bl_env.run_baseline(seed=config.seed, verbose=verbose)
 
     # ── 2. Q-Learning Eğitim ─────────────────────────────────────────
-    print("\n" + "━" * 60)
-    print(f"  ADIM 2/3 — Q-Learning Eğitimi ({n_episodes} Episode)")
-    print("━" * 60)
+    if verbose:
+        print("\n" + "=" * 60)
+        print(f"  ADIM 2/3 — Q-Learning Eğitimi ({n_episodes} Episode)")
+        print("=" * 60)
     ql_env = QLearningEnv(config)
     episode_costs = ql_env.train(n_episodes=n_episodes, verbose=verbose)
 
     # ── 3. Q-Learning Greedy Değerlendirme ───────────────────────────
-    print("\n" + "━" * 60)
-    print("  ADIM 3/3 — Q-Learning Greedy Değerlendirme (ε=0)")
-    print("━" * 60)
-    ql_metrics = ql_env.run_evaluation(seed=config.seed)
+    if verbose:
+        print("\n" + "=" * 60)
+        print("  ADIM 3/3 — Q-Learning Greedy Değerlendirme (ε=0)")
+        print("=" * 60)
+    ql_metrics = ql_env.run_evaluation(seed=config.seed, verbose=verbose)
 
     # ── 4. Karşılaştırma çıktıları ───────────────────────────────────
-    _print_comparison(bl_metrics, ql_metrics)
+    _print_comparison(bl_metrics, ql_metrics, file=summary_file)
     plot_comparison(bl_metrics, ql_metrics, episode_costs, save_dir=save_dir)
     plot_training_curve(episode_costs, save_dir=save_dir)
 
     return bl_metrics, ql_metrics, episode_costs
 
 
+# Lambda sweep varsayılan değerleri (log ile aynı sıra)
+_DEFAULT_LAMBDAS = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Q-Learning vs Baseline Karşılaştırması")
-    parser.add_argument("--episodes", type=int, default=100,
-                        help="Q-Learning eğitim episode sayısı (varsayılan: 100)")
+    parser.add_argument("--episodes", type=int, default=400,
+                        help="Q-Learning eğitim episode sayısı (varsayılan: 400)")
     parser.add_argument("--save_dir", type=str, default=".",
                         help="Grafiklerin kaydedileceği dizin")
+    parser.add_argument(
+        "--lambdas", type=float, nargs="+", default=_DEFAULT_LAMBDAS,
+        help="Lambda_UILI sweep değerleri (varsayılan: 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50)",
+    )
     args = parser.parse_args()
 
-    cfg = SimConfig()
-    run_comparison(cfg, n_episodes=args.episodes, save_dir=args.save_dir)
+    summary_path = os.path.join(args.save_dir, "simulation_summary_log.txt")
+
+    with open(summary_path, "w", encoding="utf-8") as sf:
+
+        top_header = (
+            f"\n{'='*60}\n"
+            f"{'HYPERPARAMETER SEARCH RESULTS: LAMBDA_UILI':^60}\n"
+            f"{'='*60}\n"
+        )
+        print(top_header, end="")
+        sf.write(top_header)
+
+        for lam in args.lambdas:
+            lam_header = (
+                f"\n{'='*60}\n"
+                f" LAMBDA_UILI = {lam:.2f} RESULTS\n"
+                f"{'='*60}\n"
+            )
+            print(lam_header, end="")
+            sf.write(lam_header)
+
+            lam_tag = f"lambda_{lam:.2f}".replace(".", "_")
+            lam_dir = os.path.join(args.save_dir, lam_tag)
+            os.makedirs(lam_dir, exist_ok=True)
+
+            cfg = SimConfig(lambda_uili=lam)
+            run_comparison(cfg, n_episodes=args.episodes, save_dir=lam_dir,
+                           verbose=False, summary_file=sf)
+
+    print(f"\nOzet log dosyasi olusturuldu: {summary_path}")

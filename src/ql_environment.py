@@ -38,7 +38,7 @@ class QLearningEnv(EnergyTradingEnv):
         gamma: float = 0.95,
         epsilon: float = 1.0,
         epsilon_min: float = 0.05,
-        epsilon_decay: float = 0.97,
+        epsilon_decay: float = 0.985,
     ):
         super().__init__(config)
         self.ql_alpha_lr      = alpha_lr
@@ -183,7 +183,7 @@ class QLearningEnv(EnergyTradingEnv):
 
         return episode_rewards
 
-    def run_evaluation(self, seed: Optional[int] = None) -> MetricsCollector:
+    def run_evaluation(self, seed: Optional[int] = None, verbose: bool = True) -> MetricsCollector:
         """Epsilon=0 (tam greedy) ile bir değerlendirme günü çalıştır."""
         eval_seed = seed if seed is not None else self.config.seed + 9999
         self.reset(seed=eval_seed)
@@ -198,17 +198,19 @@ class QLearningEnv(EnergyTradingEnv):
                 saved_epsilons[agent.agent_id] = agent.epsilon
                 agent.epsilon = 0.0
 
-        print("\n" + "=" * 60)
-        print("  Q-Learning — Evaluation Run (ε=0, Greedy Policy)")
-        print("=" * 60)
+        if verbose:
+            print("\n" + "=" * 60)
+            print("  Q-Learning — Evaluation Run (ε=0, Greedy Policy)")
+            print("=" * 60)
 
         try:
             done = False
             while not done:
                 _, _, done, _ = self.step()
         finally:
-            print()
-            print(self.metrics.summary())
+            if verbose:
+                print()
+                print(self.metrics.summary())
 
             # Epsilon'u ve eğitim durumunu geri yükle
             self.training_enabled = old_training_enabled
@@ -239,19 +241,21 @@ class BaselineEnv(EnergyTradingEnv):
         self.agents = new_agents
         return obs
 
-    def run_baseline(self, seed: Optional[int] = None) -> MetricsCollector:
+    def run_baseline(self, seed: Optional[int] = None, verbose: bool = True) -> MetricsCollector:
         """Baseline ajanlarla tek bir simülasyon günü çalıştır."""
         run_seed = seed if seed is not None else self.config.seed
         self.reset(seed=run_seed)
 
-        print("\n" + "=" * 60)
-        print("  Baseline (Rule-Based) — Single Run")
-        print("=" * 60)
+        if verbose:
+            print("\n" + "=" * 60)
+            print("  Baseline (Rule-Based) — Single Run")
+            print("=" * 60)
 
         done = False
         while not done:
             _, _, done, _ = self.step()
 
-        print()
-        print(self.metrics.summary())
+        if verbose:
+            print()
+            print(self.metrics.summary())
         return self.metrics

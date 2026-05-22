@@ -73,7 +73,7 @@ N_PV_BUCKETS   = 4   # PV seviye sayısı
 # Action space — FiT ile ToU arasında ayrık fiyat seviyeleri
 # ---------------------------------------------------------------------------
 # Fiyatlar runtime'da config'den hesaplanır; burada sadece indeks sayısı sabit.
-N_ACTIONS = 7   # Hocanın "5–10 ayrık" tavsiyesinin ortası
+N_ACTIONS = 15  # Daha ince granularity: adım ~1.57 ¢/kWh (önceki 7 aksiyonda ~3.67 ¢/kWh)
 
 
 def _action_prices(fit: float, tou: float) -> np.ndarray:
