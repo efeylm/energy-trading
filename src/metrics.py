@@ -25,8 +25,6 @@ class HourlyMetrics:
     total_curtailed: float          # kWh of surplus that was curtailed
     n_buyers: int                   # Number of agents that submitted buy orders
     n_sellers: int                  # Number of agents that submitted sell orders
-    n_starvation_events: int        # Agents that hit starvation this hour
-    agent_battery_soc: Dict[int, float] = field(default_factory=dict)  # agent_id -> SoC
 
 
 class MetricsCollector:
@@ -93,14 +91,6 @@ class MetricsCollector:
         """Total kWh of surplus energy that was curtailed."""
         return sum(h.total_curtailed for h in self.hourly)
     
-    def survival_rate(self) -> float:
-        """Fraction of agent-hours without starvation events."""
-        total_agent_hours = self.n_agents * len(self.hourly)
-        if total_agent_hours == 0:
-            return 1.0
-        total_starvation = sum(h.n_starvation_events for h in self.hourly)
-        return 1.0 - (total_starvation / total_agent_hours)
-    
     def average_clearing_price(self) -> float:
         """Volume-weighted average clearing price across all hours."""
         total_value = sum(h.average_price * h.total_traded_kwh for h in self.hourly)
@@ -112,12 +102,6 @@ class MetricsCollector:
     def get_agent_bills(self) -> Dict[int, float]:
         """Get final energy bills for all agents."""
         return dict(self.agent_total_cost)
-    
-    def get_battery_soc_timeseries(self, agent_id: int) -> np.ndarray:
-        """Get battery SoC over time for a specific agent."""
-        return np.array([
-            h.agent_battery_soc.get(agent_id, 0.0) for h in self.hourly
-        ])
     
     def summary(self) -> str:
         """Generate a text summary of the simulation results."""
@@ -131,7 +115,6 @@ class MetricsCollector:
             f"  Total unmet demand:          {self.total_unmet_demand():.2f} kWh",
             f"  Total curtailment:           {self.total_curtailment():.2f} kWh",
             f"  Average clearing price:      ${self.average_clearing_price():.4f}/kWh",
-            f"  Survival rate:               {self.survival_rate():.1%}",
             "",
             "  --- Agent Energy Bills ---",
         ]

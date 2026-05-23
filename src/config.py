@@ -12,37 +12,17 @@ import numpy as np
 
 
 @dataclass
-class BatteryConfig:
-    """Energy Storage (ES) operating parameters (Table 1 from paper)."""
-    capacity_min: float = 2.0       # E_es_min (kWh)
-    capacity_max: float = 10.0      # E_es_max (kWh)
-    power_max: float = 2.0          # P_es_max (kW)
-    eta_charge: float = 0.95        # η_esc - charging efficiency
-    eta_discharge: float = 0.95     # η_esd - discharging efficiency
-
-
-@dataclass
 class AgentMBParams:
-    """Marginal Benefit curve: MB(q) = alpha * exp(-beta * q)
-    
-    Used by buyers to determine their willingness to pay.
-    alpha: base value of the good (higher = more valuable energy)
-    beta: rate of satiation (higher = utility drops faster with quantity)
-    """
-    alpha: float = 0.20   # $/kWh base valuation
-    beta: float = 0.3     # satiation rate
+    """Marginal Benefit curve parameters."""
+    alpha: float = 0.20
+    beta: float = 0.3
 
 
 @dataclass
 class AgentMCParams:
-    """Marginal Cost curve: MC(q) = gamma * q + delta
-    
-    Used by sellers to determine their minimum ask price.
-    gamma: production difficulty (higher = cost rises faster)
-    delta: base cost (minimum cost of first unit)
-    """
-    gamma: float = 0.02   # $/kWh per unit
-    delta: float = 0.04   # $/kWh base cost
+    """Marginal Cost curve parameters."""
+    gamma: float = 0.00
+    delta: float = 0.04
 
 
 @dataclass
@@ -50,45 +30,78 @@ class SimConfig:
     """Master simulation configuration."""
     
     # --- Agent population ---
-    n_prosumers: int = 4        # Agents with PV + battery + load
-    n_consumers: int = 4        # Agents with only load + battery
+    n_producers: int = 4        # Agents with PV + load
+    n_consumers: int = 4        # Agents with only load
     
     # --- Time structure ---
-    t_hours: int = 24           # Simulation day length (hours)
-    delta_t: float = 1.0        # Time step (hours)
-    
-    # --- Battery defaults ---
-    battery: BatteryConfig = field(default_factory=BatteryConfig)
-    
-    # --- Starvation prevention ---
-    starvation_threshold: float = 0.5       # kWh - below this → emergency bid
-    emergency_price_multiplier: float = 3.0  # Emergency bid = MB * this multiplier
-    starvation_penalty: float = 10.0         # Reward penalty for unmet demand
+    t_hours: int = 48           # Simulation day length (steps)
+    delta_t: float = 0.5        # Time step (hours)
     
     # --- MB/MC parameters per agent (overridable) ---
-    # Prosumer MB params (when buying)
-    prosumer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
+    # Producer MB params (when buying)
+    producer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
         alpha=0.18, beta=0.25
     ))
-    # Prosumer MC params (when selling)
-    prosumer_mc: AgentMCParams = field(default_factory=lambda: AgentMCParams(
-        gamma=0.015, delta=0.04
+    # Producer MC params (when selling)
+    producer_mc: AgentMCParams = field(default_factory=lambda: AgentMCParams(
+        gamma=0.03, delta=0.08
     ))
-    # Consumer MB params (when buying — typically higher willingness to pay)
+    # Consumer MB params (when buying)
     consumer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
         alpha=0.22, beta=0.20
     ))
-    # Consumer MC params (consumers rarely sell, but may discharge battery)
+    # Consumer MC params (rarely used if no battery, but kept for consistency)
     consumer_mc: AgentMCParams = field(default_factory=lambda: AgentMCParams(
         gamma=0.025, delta=0.06
     ))
     
-    # --- Battery storage heuristic thresholds ---
-    battery_store_threshold: float = 0.5  # If battery SoC < this fraction, prefer storing
-    
+    # --- Iterative Double Auction parameters ---
+    initial_shout_margin: float = 0.15   # Buyers start at MB*(1-margin), sellers at MC*(1+margin)
+    alpha: float = 0.5                   # Offer convergence speed per round
+    max_auction_rounds: int = 50         # Maximum bidding rounds per hour
+    unit_size: float = 0.5              # kWh per discrete tradeable unit
+
     # --- Random seed for reproducibility ---
-    seed: int = 42
+    seed: int = 1
+
+    # --- Seller flat-block pricing (randomness) ---
+    seller_flat_prob: float = 0.5        
+    seller_flat_min_units: int = 2       
+    seller_flat_max_units: int = 5       
+
+    # --- Buyer flat-block pricing (randomness) ---
+    buyer_flat_prob: float = 0.0         
+
+    # --- Data Paths ---
+    mb_data_path: str = "src/data/mb_hourly_params.json"
+
+    # --- Faz 2: Tariff reference prices for Q-Learning reward ---
+    # FiT (Feed-in Tariff): minimum guaranteed price for exported energy ($/kWh)
+    # Sellers receive this even if unmatched in the P2P market.
+    fit_price: float = 0.06   # ~6 cent/kWh (typical AU/EU FiT)
+    # ToU (Time-of-Use): maximum retail grid price a buyer would pay ($/kWh)
+    # Sellers can price up to ToU since buyers save vs. grid.
+    tou_price: float = 0.28   # ~28 cent/kWh (typical peak ToU rate)
+
+    # --- Use-It-or-Lose-It (UILI) seller pricing ---
+    # P(Q) = FiT + (ToU - FiT) * exp(-lambda_uili * Q)
+    # At Q=0  → price = ToU  (maximum, no production pressure)
+    # At Q→∞  → price → FiT (floor, high production forces cheap bids)
+    # Higher lambda_uili = faster price decay with quantity.
+    lambda_uili: float = 0.2   # decay rate (1/kWh); tune per scenario
+
+    # --- Reward shaping: fiyat primi katsayısı (β) ---
+    # reward += β × matched_qty × (clearing_price - FiT)
+    # 0.0 = orijinal formül (değişiklik yok)
+    # 0.3 = önerilen başlangıç değeri
+    reward_beta: float = 0.0
+
+    # --- Reward shaping: kısıtlanan enerji için ödül oranı ---
+    # Eski davranış : curtailed × FiT  (+$0.06/kWh — "ne olursa şebekeye sat")
+    # Yeni varsayılan: curtailed × 0.0  (satamadıysan hiç kazanma → sat!)
+    # Negatif değer : curtailed × (-x) → aktif ceza
+    reward_curtail_rate: float = 0.0
 
     @property
     def n_agents(self) -> int:
-        return self.n_prosumers + self.n_consumers
+        return self.n_producers + self.n_consumers
