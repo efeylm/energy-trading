@@ -96,11 +96,8 @@ class SimConfig:
     # 0.3 = önerilen başlangıç değeri
     reward_beta: float = 0.0
 
-    # --- Reward shaping: kısıtlanan enerji için ödül oranı ---
-    # Eski davranış : curtailed × FiT  (+$0.06/kWh — "ne olursa şebekeye sat")
-    # Yeni varsayılan: curtailed × 0.0  (satamadıysan hiç kazanma → sat!)
-    # Negatif değer : curtailed × (-x) → aktif ceza
-    reward_curtail_rate: float = 0.0
+    # reward_curtail_rate kaldırıldı — agent.py artık curtailed × FiT kullanıyor
+    # (grid fallback: eşleşemeyen satıcı enerjisi devlete FiT'ten gider)
 
     @property
     def n_agents(self) -> int:

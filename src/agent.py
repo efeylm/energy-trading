@@ -250,50 +250,52 @@ class EnergyAgent:
 
     def get_reward(self, hour: int) -> float:
         """
-        Faz 2 Reward Fonksiyonu:
+        Grid Fallback Dahil Reward Fonksiyonu.
 
-        Satıcı (inflexible_load < 0 → net_load negatif):
-            reward = matched_qty × clearing_price + unmatched_qty × FiT
-            - Eşleşen enerji → piyasa fiyatından gelir
-            - Eşleşemeyen enerji → FiT taban fiyatından gelir (şebekeye ihracat)
+        P2P double auction'da eşleşemeyen enerji grid'e düşer:
+
+        Satıcı (inflexible_load < 0):
+            reward = matched_qty  × clearing_price   ← P2P geliri
+                   + curtailed_qty × FiT              ← grid'e FiT'ten sat
+                   + β × (P2P geliri − sold_qty × FiT) ← fiyat primi (opsiyonel)
 
         Alıcı (inflexible_load > 0):
-            reward = -net_cost
-            - Alıcı maliyet minimize eder (negatif maliyet = iyi)
+            reward = −(P2P maliyeti + unmet_qty × ToU)
+                       P2P'de alamadıklarını grid'den ToU fiyatıyla alır
 
-        FiT değeri config'den alınır; config bağlantısı yoksa 0.06 $/kWh kullanılır.
+        Bu sayede:
+        - ToU ve FiT gerçek ekonomik anlam taşır
+        - Satıcı: P2P > FiT olduğu için P2P'yi tercih etmeli
+        - Alıcı:  P2P < ToU olduğu için P2P'yi tercih etmeli
+        - "Eşleşemedim, durdum" diye bir şey kalmaz
         """
         if not self.hourly_log:
             return 0.0
 
-        last = self.hourly_log[-1]
+        last      = self.hourly_log[-1]
         fit_price = getattr(self.config, "fit_price", 0.06)
+        tou_price = getattr(self.config, "tou_price", 0.28)
         beta      = getattr(self.config, "reward_beta", 0.0)
 
-        # Satıcı mı?
-        # net_load negatif → sold_kwh > 0 veya curtailed > 0
-        sold_kwh    = last.get("sold_kwh", 0.0)
-        curtailed   = last.get("curtailed", 0.0)
+        sold_kwh    = last.get("sold_kwh",    0.0)
+        curtailed   = last.get("curtailed",   0.0)
         sell_income = last.get("sell_income", 0.0)
+        buy_cost    = last.get("buy_cost",    0.0)
+        unmet       = last.get("unmet_demand", 0.0)
 
         is_seller = (sold_kwh + curtailed) > 1e-6
 
         if is_seller:
-            # Temel reward: matched_qty × clearing_price + unmatched_qty × curtail_rate
-            # curtail_rate = 0.0 → satamadıysan sıfır kazanırsın (eski: FiT=+$0.06)
-            curtail_rate  = getattr(self.config, "reward_curtail_rate", 0.0)
-            unmatched_reward = curtailed * curtail_rate
-            reward = sell_income + unmatched_reward
+            # P2P geliri + grid export (FiT) — her durumda bir gelir var
+            reward = sell_income + curtailed * fit_price
 
-            # β fiyat primi: FiT üzerinde satılan her kWh için ekstra ödül
-            # Bu terim ajana "fiyatı gereksiz yere düşürme" sinyali verir.
-            # price_premium = sold_kwh × (avg_clearing_price - FiT)
+            # Fiyat primi: P2P fiyatı FiT'in üzerindeyse ek ödül
+            # Ajana "fiyatı gereksiz düşürme" sinyali verir
             if beta > 0.0 and sold_kwh > 1e-6:
-                price_premium = sell_income - sold_kwh * fit_price
-                reward += beta * price_premium
+                reward += beta * (sell_income - sold_kwh * fit_price)
         else:
-            # Alıcı: maliyet minimize (reward = -net_cost)
-            reward = -last["net_cost"]
+            # P2P alım maliyeti + grid import (ToU) — eşleşemeyen kısım pahalıya gelir
+            reward = -(buy_cost + unmet * tou_price)
 
         return reward
     
