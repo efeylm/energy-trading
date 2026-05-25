@@ -2,9 +2,12 @@
 REINFORCE (Direct Policy Gradient) Agent — Faz 3.
 
 Hocanın spesifikasyonu:
-  State  : (günün saati, arz miktarı) — 2 boyutlu sürekli uzay
-           hour_norm   = obs.hour / 47.0           ∈ [0, 1]
-           supply_norm = clip(|net_load| / 10, 1)  ∈ [0, 1]
+  State  : 5 boyutlu sürekli uzay
+           hour_norm   = obs.hour / 47.0              ∈ [0, 1]
+           supply_norm = clip(|net_load| / 10, 1)     ∈ [0, 1]
+           best_bid_n  = clip(obs.best_bid / 0.5, 1)  ∈ [0, 1]  ← YENİ
+           best_ask_n  = clip(obs.best_ask / 0.5, 1)  ∈ [0, 1]  ← YENİ
+           avg_price_n = clip(obs.avg_price / 0.5, 1) ∈ [0, 1]  ← YENİ
 
   Network: PolicyNet — Linear(2→64) → ReLU → Linear(64→64) → ReLU → Linear(64→1) → Sigmoid
            W = θ  (hocanın "Theta Weight" ifadesi = ağın tüm parametreleri)
@@ -16,10 +19,12 @@ Hocanın spesifikasyonu:
            Satıcı: sell_income + curtailed × rate + β × price_premium
            Alıcı : −net_cost  (alıcı öğrenmez, MB eğrisi kullanılır)
 
-  Update : Doğrudan Gradient (Direct Policy Optimization — Seçenek 1):
-           G_t  = Σ_{k=t}^{T} γ^k × r_k    normalize edilmiş indirimli getiri
-           loss = −mean(G_t × a_t)           episode SONUNDA tek gradient adımı
-           θ   ← θ − lr × ∇_θ loss
+  Update : Proper REINFORCE (log_prob policy gradient):
+           G_t      = Σ_{k=t}^{T} γ^k × r_k           normalize edilmiş getiri
+           log_prob = log Normal(a_raw; μ=PolicyNet(s), σ)
+           loss     = −mean(G_t × log_prob)             episode SONUNDA güncelleme
+           θ        ← θ − lr × ∇_θ loss
+           Gradient: ∂log_prob/∂μ = (a_raw − μ) / σ²  → μ üzerinden akar
 
 Sadece satıcılar öğrenir (net_load < 0).
 Alıcılar MB eğrisini kullanır — Faz 1/2 mantığı korunur.
@@ -118,16 +123,18 @@ class REINFORCEAgent(EnergyAgent):
         self.fit_price = config.fit_price
         self.tou_price = config.tou_price
 
-        # Politika ağı ve optimizer
-        self.policy_net = PolicyNet(state_dim=2, hidden=hidden)
+        # Politika ağı ve optimizer (state_dim=5: saat, miktar, bid, ask, avg_price)
+        self.policy_net = PolicyNet(state_dim=5, hidden=hidden)
         self.optimizer  = optim.Adam(self.policy_net.parameters(), lr=lr)
 
-        # Episode buffer: her satıcı adımı için (a_tensor, reward)
-        # _episode_a: gradient graph'ı canlı tutan tensor listesi
-        # _episode_rewards: float listesi (senkronize)
-        self._episode_a: List[torch.Tensor] = []
-        self._episode_rewards: List[float]  = []
-        self._last_was_seller: bool         = False
+        # Episode buffer — her satıcı adımı için:
+        #   _episode_mu  : μ = PolicyNet(s), gradient graph canlı
+        #   _episode_raw : ham örnek a_raw = μ + noise, detached (log_prob için)
+        #   _episode_rewards: float listesi (ikisiyle senkronize)
+        self._episode_mu: List[torch.Tensor]  = []
+        self._episode_raw: List[torch.Tensor] = []
+        self._episode_rewards: List[float]    = []
+        self._last_was_seller: bool           = False
 
         # Eğitim modu:
         #   True  → Gaussian gürültü eklenir (keşif / exploration)
@@ -143,17 +150,27 @@ class REINFORCEAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def _encode_state(self, obs: Observation) -> torch.Tensor:
-        """Gözlemi 2-boyutlu normalize tensora çevirir.
+        """Gözlemi 5-boyutlu normalize tensora çevirir.
 
-        hour_norm   = obs.hour / 47.0               ∈ [0, 1]
-        supply_norm = clip(|inflexible_load| / 10)  ∈ [0, 1]
+        [0] hour_norm    = obs.hour / 47.0                ∈ [0, 1]
+        [1] supply_norm  = clip(|inflexible_load| / 10)   ∈ [0, 1]
+        [2] best_bid_n   = clip(obs.best_bid / 0.5)       ∈ [0, 1]  ← piyasa sinyali
+        [3] best_ask_n   = clip(obs.best_ask / 0.5)       ∈ [0, 1]  ← piyasa sinyali
+        [4] avg_price_n  = clip(obs.last_avg_price / 0.5) ∈ [0, 1]  ← piyasa sinyali
 
-        supply_norm: negatif net_load → satıcı fazlası kWh, 10 kWh'da normalize
+        Normalizer 0.5: FiT=0.06 → 0.12, ToU=0.28 → 0.56 (0.5 iyi bir orta nokta)
+        Sıfır değer (saat 0, henüz işlem yok) geçerli girdi — ağ bunu öğrenir.
         """
         hour_norm   = obs.hour / 47.0
-        surplus     = max(0.0, -obs.inflexible_load)  # satıcı: net_load < 0
+        surplus     = max(0.0, -obs.inflexible_load)
         supply_norm = min(surplus / 10.0, 1.0)
-        return torch.tensor([hour_norm, supply_norm], dtype=torch.float32)
+        best_bid_n  = min(obs.best_bid / 0.5, 1.0)
+        best_ask_n  = min(obs.best_ask / 0.5, 1.0)
+        avg_price_n = min(obs.last_avg_price / 0.5, 1.0)
+        return torch.tensor(
+            [hour_norm, supply_norm, best_bid_n, best_ask_n, avg_price_n],
+            dtype=torch.float32,
+        )
 
     # ------------------------------------------------------------------
     # Policy override
@@ -173,19 +190,22 @@ class REINFORCEAgent(EnergyAgent):
 
         if net < -0.01:  # ── SATICI: PolicyNet kullan ──────────────────
             self._last_was_seller = True
-            state  = self._encode_state(obs)
-            a_base = self.policy_net(state)          # shape [1], requires_grad=True
+            state  = self._encode_state(obs)          # 5-boyutlu
+            a_base = self.policy_net(state)            # μ ∈ [0,1], requires_grad=True
 
             if self.training_mode:
-                noise = torch.randn_like(a_base) * self.sigma
-                a     = (a_base + noise).clamp(0.0, 1.0)   # diferansiyel, grad var
+                noise   = torch.randn_like(a_base) * self.sigma
+                a_raw   = a_base + noise               # ham örnek (log_prob için)
+                a_acted = a_raw.clamp(0.0, 1.0)       # piyasaya gönderilen aksiyon
             else:
-                a = a_base.clamp(0.0, 1.0)                 # deterministik
+                a_raw   = a_base                       # deterministik: noise yok
+                a_acted = a_base.clamp(0.0, 1.0)
 
-            self._episode_a.append(a)  # gradient graph korunuyor
+            # μ ve ham örnek ayrı saklanır — proper REINFORCE log_prob için
+            self._episode_mu.append(a_base)            # grad var (ağa bağlı)
+            self._episode_raw.append(a_raw.detach())   # grad yok (sadece değer)
 
-            # Piyasaya gönderilecek fiyat (gradient graph dışında)
-            price = self.fit_price + float(a.detach()) * (self.tou_price - self.fit_price)
+            price = self.fit_price + float(a_acted.detach()) * (self.tou_price - self.fit_price)
             price = float(np.clip(price, 0.001, 2.0))
 
             order = Order(
@@ -233,18 +253,19 @@ class REINFORCEAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def update_policy(self):
-        """Episode sonu gradient güncellemesi — Direct Policy Gradient.
+        """Episode sonu gradient güncellemesi — Proper REINFORCE (log_prob).
 
         Adımlar:
           1. İndirimli getiriler:  G_t = Σ_{k=t}^{T} γ^k × r_k
           2. Normalize et:         G_t ← (G_t - mean) / (std + ε)
-          3. Loss:                 loss = −mean(G_t × a_t)
-             Yorum: yüksek getirili adımlarda a_t'yi artır,
-                    düşük getirili adımlarda a_t'yi azalt.
-          4. Gradient:             loss.backward() → optimizer.step()
-          5. Gradient clipping:    max_norm = 1.0 (patlamayı önler)
+          3. Log-prob hesapla:     π(a|s) = Normal(μ=PolicyNet(s), σ)
+                                   log_prob = log π(a_raw; μ, σ)
+                                   ∂log_prob/∂μ = (a_raw - μ) / σ²
+          4. Loss:                 loss = −mean(G_t × log_prob)
+          5. Gradient:             loss.backward() → optimizer.step()
+          6. Gradient clipping:    max_norm = 1.0
         """
-        n = min(len(self._episode_a), len(self._episode_rewards))
+        n = min(len(self._episode_mu), len(self._episode_rewards))
         if n == 0:
             return
 
@@ -264,15 +285,21 @@ class REINFORCEAgent(EnergyAgent):
             if std > 1e-8:
                 returns_t = (returns_t - returns_t.mean()) / (std + 1e-8)
 
-        # ── Adım 3 & 4: Loss ve gradient ─────────────────────────────
-        # torch.cat: n ayrı [1] tensorı → shape [n], gradient graph'lar birleşir
-        a_stack = torch.cat(self._episode_a[:n])
-        loss    = -(returns_t * a_stack).mean()
+        # ── Adım 3 & 4 & 5: Proper REINFORCE loss ────────────────────
+        # μ: PolicyNet çıktısı, grad var
+        # a_raw: ham örnek (clamp öncesi), detached — log_prob değeri için
+        # Gradient sadece μ üzerinden akar: ∂log_prob/∂μ = (a_raw - μ) / σ²
+        mu_stack  = torch.cat(self._episode_mu[:n])    # shape [n], grad var
+        raw_stack = torch.cat(self._episode_raw[:n])   # shape [n], grad yok
+
+        dist      = torch.distributions.Normal(mu_stack, self.sigma)
+        log_probs = dist.log_prob(raw_stack)            # shape [n]
+        loss      = -(returns_t * log_probs).mean()
 
         self.optimizer.zero_grad()
-        loss.backward()  # n ayrı forward pass'in gradientları birikmeli hesaplanır
+        loss.backward()
 
-        # ── Adım 5: Gradient clipping ─────────────────────────────────
+        # ── Adım 6: Gradient clipping ─────────────────────────────────
         torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
 
         self.optimizer.step()
@@ -293,7 +320,8 @@ class REINFORCEAgent(EnergyAgent):
         self.sigma = max(self.sigma_min, self.sigma * self.sigma_decay)
 
         # Buffer temizle → computation graph serbest bırakılır (bellek)
-        self._episode_a       = []
+        self._episode_mu      = []
+        self._episode_raw     = []
         self._episode_rewards = []
         self._last_was_seller = False
 

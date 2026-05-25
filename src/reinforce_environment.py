@@ -97,7 +97,8 @@ class REINFORCEEnv(EnergyTradingEnv):
                 existing.hourly_log       = []
 
                 # Episode buffer'ı temizle (önceki episode artığı kalmasın)
-                existing._episode_a       = []
+                existing._episode_mu      = []
+                existing._episode_raw     = []
                 existing._episode_rewards = []
                 existing._last_was_seller = False
 
