@@ -286,8 +286,8 @@ def run_comparison(
     return bl_metrics, ql_metrics, episode_costs
 
 
-# Lambda sweep varsayılan değerleri (log ile aynı sıra)
-_DEFAULT_LAMBDAS = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
+# Lambda sweep varsayılan değerleri
+_DEFAULT_LAMBDAS = [0.15]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Q-Learning vs Baseline Karşılaştırması")
@@ -297,15 +297,15 @@ if __name__ == "__main__":
                         help="Grafiklerin kaydedileceği dizin")
     parser.add_argument(
         "--lambdas", type=float, nargs="+", default=_DEFAULT_LAMBDAS,
-        help="Lambda_UILI sweep değerleri (varsayılan: 0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50)",
+        help="Lambda_UILI sweep değerleri (varsayılan: 0.15)",
     )
     parser.add_argument(
         "--beta", type=float, default=0.3,
         help="Reward fiyat primi katsayisi β (varsayılan: 0.3, 0.0 = orijinal formül)",
     )
     parser.add_argument(
-        "--curtail-rate", type=float, default=0.0,
-        help="Satılamayan enerji ödül oranı (varsayılan: 0.0 | eski: 0.06=FiT | negatif=ceza)",
+        "--curtail-rate", type=float, default=-0.03,
+        help="Satılamayan enerji ödül oranı (varsayılan: -0.03 | eski: 0.06=FiT | negatif=ceza)",
     )
     args = parser.parse_args()
 
