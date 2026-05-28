@@ -292,8 +292,12 @@ class EnergyAgent:
                 price_premium = sell_income - sold_kwh * fit_price
                 reward += beta * price_premium
         else:
-            # Alıcı: maliyet minimize (reward = -net_cost)
-            reward = -last["net_cost"]
+            # Alıcı: maliyet minimize
+            # Eşleşmeyen talep için ToU cezası — Q-tablo'nun "hiç eşleşme"yi
+            # tercih etmesini engeller (karşılanmayan enerji şebekeden ToU'dan alınır).
+            tou_price   = getattr(self.config, "tou_price", 0.28)
+            unmet_penalty = last.get("unmet_demand", 0.0) * tou_price
+            reward = -(last["net_cost"] + unmet_penalty)
 
         return reward
     

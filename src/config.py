@@ -94,13 +94,13 @@ class SimConfig:
     # reward += β × matched_qty × (clearing_price - FiT)
     # 0.0 = orijinal formül (değişiklik yok)
     # 0.3 = önerilen başlangıç değeri
-    reward_beta: float = 0.3
+    reward_beta: float = 1.5
 
     # --- Reward shaping: kısıtlanan enerji için ödül oranı ---
     # Eski davranış : curtailed × FiT  (+$0.06/kWh — "ne olursa şebekeye sat")
     # Yeni varsayılan: curtailed × 0.0  (satamadıysan hiç kazanma → sat!)
     # Negatif değer : curtailed × (-x) → aktif ceza
-    reward_curtail_rate: float = -0.03
+    reward_curtail_rate: float = 0.0
 
     @property
     def n_agents(self) -> int:

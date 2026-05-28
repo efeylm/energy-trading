@@ -54,10 +54,10 @@ def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector
     bl_reward = - (bl_unmet * 5.0 + bl_curt * 2.0) 
     ql_reward = - (ql_unmet * 5.0 + ql_curt * 2.0)
 
-    # Agent 0-3 üretici olduğu için onların negatif maliyetlerini topluyoruz
-    bl_seller_rev = sum(-bl_metrics.agent_total_cost[i] for i in range(4))
-    ql_seller_rev = sum(-ql_metrics.agent_total_cost[i] for i in range(4))
-
+    # Agent 0-3 üretici, 4-7 tüketici
+    n_prod = bl_metrics.n_agents // 2
+    bl_seller_rev = sum(-bl_metrics.agent_total_cost[i] for i in range(n_prod))
+    ql_seller_rev = sum(-ql_metrics.agent_total_cost[i] for i in range(n_prod))
     def _pct(a, b):
         """(a - b) / |b| * 100, None if b == 0."""
         if abs(b) < 1e-9:

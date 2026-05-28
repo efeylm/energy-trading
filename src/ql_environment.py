@@ -92,6 +92,7 @@ class QLearningEnv(EnergyTradingEnv):
                 existing._prev_state      = None
                 existing._prev_action_idx = None
                 existing._prev_obs        = None
+                existing._prev_role       = None
                 
                 new_agents.append(existing)
             else:
@@ -155,6 +156,9 @@ class QLearningEnv(EnergyTradingEnv):
         episode_rewards : Her episode'daki toplam sistem ödülü listesi.
         """
         episode_rewards: List[float] = []
+
+        # Exploration randomness'ı da seed'le — reproducible sonuçlar için
+        np.random.seed(self.config.seed)
 
         for ep in range(n_episodes):
             seed = self.config.seed + ep

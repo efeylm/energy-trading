@@ -241,30 +241,40 @@ class EnergyTradingEnv:
             # actions effective in the market.
             
             if order.is_buy:
-                # 1. Get base price at full quantity to find the multiplier
-                base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
-                multiplier = order.price / base_price if base_price > 1e-6 else 1.0
-                
-                # BUYERS: Every unit (0.5 kWh) is submitted as its own Order.
-                # Strictly diminishing prices (MB curve shifted by multiplier).
-                for k in range(n_units):
-                    cum_qty    = k * unit_size
-                    actual_qty = min(unit_size, order.quantity - cum_qty)
-                    if actual_qty <= 1e-9:
-                        break
-                    
-                    raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
-                    u_price = float(np.clip(raw_u_price * multiplier, 0.001, 2.0))
-                    
-                    ind_order = Order(
+                if order.use_flat_price:
+                    # Q-Learning alıcı: flat fiyatlı tek toplu emir (satıcıyla simetrik)
+                    agg_buy_order = Order(
                         agent_id=agent.agent_id,
-                        price=u_price,
-                        quantity=actual_qty,
+                        price=float(np.clip(order.price, 0.001, 2.0)),
+                        quantity=order.quantity,
                         is_buy=True,
                         is_emergency=order.is_emergency,
                     )
-                    self.market.submit_order(ind_order)
-                    unit_orders.append(ind_order)
+                    self.market.submit_order(agg_buy_order)
+                    unit_orders.append(agg_buy_order)
+                else:
+                    # Heuristik alıcı: MB eğrisi ile ünite başı emir
+                    base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
+                    multiplier = order.price / base_price if base_price > 1e-6 else 1.0
+
+                    for k in range(n_units):
+                        cum_qty    = k * unit_size
+                        actual_qty = min(unit_size, order.quantity - cum_qty)
+                        if actual_qty <= 1e-9:
+                            break
+
+                        raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
+                        u_price = float(np.clip(raw_u_price * multiplier, 0.001, 2.0))
+
+                        ind_order = Order(
+                            agent_id=agent.agent_id,
+                            price=u_price,
+                            quantity=actual_qty,
+                            is_buy=True,
+                            is_emergency=order.is_emergency,
+                        )
+                        self.market.submit_order(ind_order)
+                        unit_orders.append(ind_order)
             else:
                 # SELLERS: Currently using a flat price for total quantity.
                 # We use the agent's decided price (which includes their strategy).

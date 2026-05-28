@@ -1,7 +1,7 @@
 
 ============================================================
          HYPERPARAMETER SEARCH RESULTS: LAMBDA_UILI         
-  beta=0.30  |  curtail_rate=-0.03  |  episodes=400
+  beta=1.50  |  curtail_rate=0.00  |  episodes=5000
 ============================================================
 
 ============================================================
@@ -13,12 +13,12 @@
 +------------------------------------------------------+
 |  Metrik                       Baseline    Q-Learn  |
 |  ------------------------------------------------------  |
-|  Sistem Basari Skoru (Rew)    -6331.69   -5953.04  [+6.0%]  |
-|  Toplam Satici Geliri ($)        35.65      36.40  [+2.1%]  |
-|  Net Transfer Dengesi ($)       0.0000    -0.0000  [OK]  |
-|  Toplam Ticaret (kWh)            76.61     130.70  [+70.6%]  |
-|  Karsilanmayan (kWh)           1180.34    1126.24  [-4.6%]  |
-|  Kisitlama (kWh)                215.00     160.91  [-25.2%]  |
-|  Ort. Takas Fiyati ($/kWh)      0.4653     0.2786  [-40.1%]  |
+|  Sistem Basari Skoru (Rew)    -6331.69   -5172.06  [+18.3%]  |
+|  Toplam Satici Geliri ($)        35.65      40.50  [+13.6%]  |
+|  Net Transfer Dengesi ($)       0.0000     0.0000  [OK]  |
+|  Toplam Ticaret (kWh)            76.61     242.27  [+216.2%]  |
+|  Karsilanmayan (kWh)           1180.34    1014.68  [-14.0%]  |
+|  Kisitlama (kWh)                215.00      49.34  [-77.1%]  |
+|  Ort. Takas Fiyati ($/kWh)      0.4653     0.1672  [-64.1%]  |
 +------------------------------------------------------+
 
