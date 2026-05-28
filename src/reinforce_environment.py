@@ -46,6 +46,8 @@ class REINFORCEEnv(EnergyTradingEnv):
         sigma_min: float = 0.05,
         sigma_decay: float = 0.993,
         hidden: int = 64,
+        seq_len: int = 12,   # geçmiş fiyat penceresi (12 = 6 saat)
+        d_model: int = 16,   # positional embedding boyutu
     ):
         super().__init__(config)
         self.nn_lr          = lr
@@ -54,6 +56,8 @@ class REINFORCEEnv(EnergyTradingEnv):
         self.nn_sigma_min   = sigma_min
         self.nn_sigma_decay = sigma_decay
         self.nn_hidden      = hidden
+        self.nn_seq_len     = seq_len
+        self.nn_d_model     = d_model
 
         self.training_enabled = True
 
@@ -118,6 +122,8 @@ class REINFORCEEnv(EnergyTradingEnv):
                     sigma_min=self.nn_sigma_min,
                     sigma_decay=self.nn_sigma_decay,
                     hidden=self.nn_hidden,
+                    seq_len=self.nn_seq_len,
+                    d_model=self.nn_d_model,
                 )
                 self._rf_agents[aid] = rf_agent
                 new_agents.append(rf_agent)
