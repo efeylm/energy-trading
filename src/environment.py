@@ -67,6 +67,7 @@ class EnergyTradingEnv:
             n_producers=self.config.n_producers,
             n_consumers=self.config.n_consumers,
             seed=actual_seed,
+            demand_multiplier=self.config.demand_multiplier,
         )
         
         # Random number generator for parameter variation
@@ -114,9 +115,10 @@ class EnergyTradingEnv:
         # Uses seed+2 so it is independent of the profile/agent RNG streams.
         self._step_rng = np.random.default_rng(actual_seed + 2)
         
-        # Print profile summary
-        print(self.profiles.summary())
-        print()
+        # Print profile summary (eğitim döngüsünde bastırılabilir)
+        if not getattr(self, '_suppress_profile_print', False):
+            print(self.profiles.summary())
+            print()
         
         return self._get_all_observations()
     

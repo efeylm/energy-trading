@@ -71,11 +71,12 @@ def generate_load_profile(
 
 class ProfileManager:
     """Manages all agent profiles for a simulation day."""
-    
-    def __init__(self, n_producers: int, n_consumers: int, seed: int = 42):
+
+    def __init__(self, n_producers: int, n_consumers: int, seed: int = 42, demand_multiplier: float = 1.0):
         self.n_producers = n_producers
         self.n_consumers = n_consumers
         self.n_agents = n_producers + n_consumers
+        self.demand_multiplier = demand_multiplier
         self.rng = np.random.default_rng(seed)
         
         # Pre-generate profiles for all agents
@@ -128,11 +129,33 @@ class ProfileManager:
     
     def get_inflexible_load(self, agent_id: int, hour: int) -> float:
         """Get inflexible (net) load: demand - PV generation.
-        
+
         Positive = needs energy (net consumer)
         Negative = has surplus energy (net producer)
+
+        demand_multiplier tüketici loaduna uygulanır (üreticiler etkilenmez).
         """
-        return self.get_load_demand(agent_id, hour) - self.get_pv_generation(agent_id, hour)
+        pv   = self.get_pv_generation(agent_id, hour)
+        load = self.get_load_demand(agent_id, hour)
+        if agent_id >= self.n_producers and self.demand_multiplier != 1.0:
+            load = load * self.demand_multiplier
+        return load - pv
+
+    def total_consumer_demand(self) -> float:
+        """Bu episode'daki toplam tüketici talebi (kWh)."""
+        total = 0.0
+        for i in range(self.n_producers, self.n_agents):
+            total += self.load_profiles[i].sum() * 0.5 * self.demand_multiplier
+        return total
+
+    def total_producer_surplus(self) -> float:
+        """Bu episode'daki toplam üretici net fazlası (kWh)."""
+        total = 0.0
+        for i in range(self.n_producers):
+            pv   = self.pv_profiles[i].sum() * 0.5
+            load = self.load_profiles[i].sum() * 0.5
+            total += max(0.0, pv - load)
+        return total
     
     def summary(self) -> str:
         """Print summary of generated profiles."""

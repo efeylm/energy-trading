@@ -102,6 +102,10 @@ class SimConfig:
     # Negatif değer : curtailed × (-x) → aktif ceza
     reward_curtail_rate: float = 0.0
 
+    # --- Demand shock experiment ---
+    # 1.0 = normal, 2.0 = 2× tüketici talebi (şok deneyi için dinamik değiştirilir)
+    demand_multiplier: float = 1.0
+
     @property
     def n_agents(self) -> int:
         return self.n_producers + self.n_consumers

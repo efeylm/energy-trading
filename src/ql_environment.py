@@ -146,16 +146,33 @@ class QLearningEnv(EnergyTradingEnv):
     # Eğitim döngüsü
     # ------------------------------------------------------------------
 
+    def set_demand_multiplier(self, multiplier: float):
+        """Talep çarpanını güncelle (şok deneyi için). Bir sonraki reset'ten itibaren geçerli."""
+        self.config.demand_multiplier = multiplier
+
+    def reset_epsilon(self, epsilon: float):
+        """Tüm Q-ajanların epsilon'unu resetle (şok sonrası yeniden keşif için)."""
+        self.ql_epsilon = epsilon
+        for agent in self._ql_agents.values():
+            agent.epsilon = epsilon
+
     def train(self, n_episodes: int, verbose: bool = True) -> List[float]:
         """n_episodes boyunca Q-Learning eğitimi yap.
 
         Her episode bir tam simülasyon günüdür.
+        Per-episode metrikler self.episode_metrics listesinde biriktirilir.
 
         Returns
         -------
         episode_rewards : Her episode'daki toplam sistem ödülü listesi.
         """
         episode_rewards: List[float] = []
+
+        # Eğitim döngüsünde profil özetini bastır
+        self._suppress_profile_print = True
+
+        if not hasattr(self, 'episode_metrics'):
+            self.episode_metrics: List[dict] = []
 
         # Exploration randomness'ı da seed'le — reproducible sonuçlar için
         np.random.seed(self.config.seed)
@@ -164,27 +181,43 @@ class QLearningEnv(EnergyTradingEnv):
             seed = self.config.seed + ep
             self.reset(seed=seed)
 
+            # Profil bazlı talep/arz toplamlarını reset sonrası yakala
+            total_demand = self.profiles.total_consumer_demand()
+            total_supply = self.profiles.total_producer_surplus()
+
             done = False
             while not done:
                 _, _, done, _ = self.step()
 
             self.end_episode()
 
-            # Yeni Metrik: Toplam Sistem Ödülü (Öğrenmeyi gösteren gerçek değer)
             total_reward = sum(
                 agent.episode_rewards[-1] for agent in self.agents
                 if isinstance(agent, QLearningAgent)
             )
             episode_rewards.append(total_reward)
 
+            self.episode_metrics.append({
+                "reward":      total_reward,
+                "avg_price":   self.metrics.average_clearing_price(),
+                "traded_kwh":  self.metrics.total_internal_trading(),
+                "unmet":       self.metrics.total_unmet_demand(),
+                "curtailed":   self.metrics.total_curtailment(),
+                "demand":      total_demand,
+                "supply":      total_supply,
+                "demand_multiplier": self.config.demand_multiplier,
+            })
+
             if verbose and (ep % max(1, n_episodes // 10) == 0 or ep == n_episodes - 1):
                 eps = self.agents[0].epsilon if self.agents else 0.0
                 print(
                     f"  [Q-Learning] Episode {ep+1:4d}/{n_episodes} | "
                     f"System Reward: {total_reward:9.2f} | "
-                    f"ε={eps:.3f}"
+                    f"ε={eps:.3f} | "
+                    f"Demand×{self.config.demand_multiplier:.1f}"
                 )
 
+        self._suppress_profile_print = False
         return episode_rewards
 
     def run_evaluation(self, seed: Optional[int] = None, verbose: bool = True) -> MetricsCollector:
