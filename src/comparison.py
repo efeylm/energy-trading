@@ -134,9 +134,31 @@ def _print_comparison_3way(
     nn_reward = nn_metrics.p2p_ratio() * 100
 
     n_prod = bl_metrics.n_agents // 2
-    bl_seller_rev = sum(-bl_metrics.agent_total_cost[i] for i in range(n_prod))
-    ql_seller_rev = sum(-ql_metrics.agent_total_cost[i] for i in range(n_prod))
-    nn_seller_rev = sum(-nn_metrics.agent_total_cost[i] for i in range(n_prod))
+
+    # Hocanın istediği: gerçek satıcı geliri ve alıcı maliyeti
+    bl_seller_rev   = bl_metrics.total_seller_revenue(n_prod)
+    ql_seller_rev   = ql_metrics.total_seller_revenue(n_prod)
+    nn_seller_rev   = nn_metrics.total_seller_revenue(n_prod)
+
+    bl_buyer_cost   = bl_metrics.total_buyer_cost(n_prod)
+    ql_buyer_cost   = ql_metrics.total_buyer_cost(n_prod)
+    nn_buyer_cost   = nn_metrics.total_buyer_cost(n_prod)
+
+    bl_p2p_sell     = bl_metrics.total_p2p_sell_income(n_prod)
+    ql_p2p_sell     = ql_metrics.total_p2p_sell_income(n_prod)
+    nn_p2p_sell     = nn_metrics.total_p2p_sell_income(n_prod)
+
+    bl_grid_sell_i  = bl_metrics.total_grid_sell_income(n_prod)
+    ql_grid_sell_i  = ql_metrics.total_grid_sell_income(n_prod)
+    nn_grid_sell_i  = nn_metrics.total_grid_sell_income(n_prod)
+
+    bl_p2p_buy      = bl_metrics.total_p2p_buy_cost(n_prod)
+    ql_p2p_buy      = ql_metrics.total_p2p_buy_cost(n_prod)
+    nn_p2p_buy      = nn_metrics.total_p2p_buy_cost(n_prod)
+
+    bl_grid_buy_c   = bl_metrics.total_grid_buy_cost(n_prod)
+    ql_grid_buy_c   = ql_metrics.total_grid_buy_cost(n_prod)
+    nn_grid_buy_c   = nn_metrics.total_grid_buy_cost(n_prod)
 
     def _pct(a, b):
         if abs(b) < 1e-9:
@@ -170,9 +192,6 @@ def _print_comparison_3way(
         ("Grid Satim/FiT (kWh)",
          f"{bl_grid_s:>10.2f}", f"{ql_grid_s:>10.2f}", f"{nn_grid_s:>10.2f}",
          _pct(ql_grid_s, bl_grid_s), _pct(nn_grid_s, bl_grid_s)),
-        ("Satici Geliri ($)",
-         f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", f"{nn_seller_rev:>10.2f}",
-         _pct(ql_seller_rev, bl_seller_rev), _pct(nn_seller_rev, bl_seller_rev)),
         ("Ort. P2P Fiyati ($/kWh)",
          f"{bl_price:>10.4f}", f"{ql_price:>10.4f}", f"{nn_price:>10.4f}",
          _pct(ql_price, bl_price), _pct(nn_price, bl_price)),
@@ -188,6 +207,39 @@ def _print_comparison_3way(
         _w(f"|  {label:<26} {bv} {qv} {nv}  {dql}  {dnn}  |")
     _w("+" + "=" * width + "+")
     _w("  (ΔQL, ΔNN = Baseline'a göre değişim yüzdesi)")
+    _w()
+
+    # ── Hocanın istediği: Satıcı Geliri & Alıcı Maliyet tablosu ─────────
+    _w("+" + "=" * width + "+")
+    _w(f"|{'  SATICI GELİRİ & ALICI MALİYET ANALİZİ':^{width}}|")
+    _w("+" + "=" * width + "+")
+    _w(f"|  {'Kalem':<30} {'Baseline':>10} {'QL(B+S)':>10} {'NN(B+S)':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
+    _w(f"|  {'-' * (width - 4)}  |")
+    welfare_rows = [
+        ("SATICI: P2P Geliri ($)",
+         f"{bl_p2p_sell:>10.2f}", f"{ql_p2p_sell:>10.2f}", f"{nn_p2p_sell:>10.2f}",
+         _pct(ql_p2p_sell, bl_p2p_sell), _pct(nn_p2p_sell, bl_p2p_sell)),
+        ("SATICI: Grid FiT Geliri ($)",
+         f"{bl_grid_sell_i:>10.2f}", f"{ql_grid_sell_i:>10.2f}", f"{nn_grid_sell_i:>10.2f}",
+         _pct(ql_grid_sell_i, bl_grid_sell_i), _pct(nn_grid_sell_i, bl_grid_sell_i)),
+        ("SATICI: TOPLAM GELİR ($)",
+         f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", f"{nn_seller_rev:>10.2f}",
+         _pct(ql_seller_rev, bl_seller_rev), _pct(nn_seller_rev, bl_seller_rev)),
+        ("ALICI: P2P Alim Maliyeti ($)",
+         f"{bl_p2p_buy:>10.2f}", f"{ql_p2p_buy:>10.2f}", f"{nn_p2p_buy:>10.2f}",
+         _pct(ql_p2p_buy, bl_p2p_buy), _pct(nn_p2p_buy, bl_p2p_buy)),
+        ("ALICI: Grid ToU Maliyeti ($)",
+         f"{bl_grid_buy_c:>10.2f}", f"{ql_grid_buy_c:>10.2f}", f"{nn_grid_buy_c:>10.2f}",
+         _pct(ql_grid_buy_c, bl_grid_buy_c), _pct(nn_grid_buy_c, bl_grid_buy_c)),
+        ("ALICI: TOPLAM MALİYET ($)",
+         f"{bl_buyer_cost:>10.2f}", f"{ql_buyer_cost:>10.2f}", f"{nn_buyer_cost:>10.2f}",
+         _pct(ql_buyer_cost, bl_buyer_cost), _pct(nn_buyer_cost, bl_buyer_cost)),
+    ]
+    for label, bv, qv, nv, dql, dnn in welfare_rows:
+        _w(f"|  {label:<30} {bv} {qv} {nv}  {dql}  {dnn}  |")
+    _w("+" + "=" * width + "+")
+    _w("  * P2P sıfır toplamlıdır: satıcı P2P geliri = alıcı P2P maliyeti")
+    _w("  * Toplam alıcı maliyeti düşüyorsa sistem alıcıya fayda sağlıyor demektir.")
     _w()
 
 
@@ -443,6 +495,16 @@ def run_comparison(
 
     # ── 4. 3-Yol Karşılaştırma Tablosu ───────────────────────────────
     _print_comparison_3way(bl_metrics, ql_metrics, nn_metrics, file=summary_file)
+
+    # ── 5. Welfare summary (her model için ayrı ayrı) ─────────────────
+    n_prod = config.n_producers
+    for label, m in [("BASELINE", bl_metrics), ("Q-LEARNING", ql_metrics), ("REINFORCE-NN", nn_metrics)]:
+        welfare_str = m.summary_welfare(n_prod)
+        print(f"\n[{label}]")
+        print(welfare_str)
+        if summary_file is not None:
+            summary_file.write(f"\n[{label}] WELFARE ANALIZI\n")
+            summary_file.write(welfare_str + "\n")
     plot_comparison(
         bl_metrics, ql_metrics, ql_ep_costs, save_dir=save_dir,
         nn_metrics=nn_metrics, nn_episode_costs=nn_ep_costs,

@@ -256,6 +256,8 @@ class EnergyTradingEnv:
                     unit_orders.append(agg_buy)
                 else:
                     # Baseline heuristic: MB eğrisi × multiplier ile ünite bazlı emir.
+                    # Tavan: ToU — grid fallback varken alıcı asla ToU'dan fazla ödemez.
+                    tou_cap = getattr(self.config, "tou_price", 0.28)
                     base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
                     multiplier = order.price / base_price if base_price > 1e-6 else 1.0
 
@@ -266,7 +268,7 @@ class EnergyTradingEnv:
                             break
 
                         raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
-                        u_price = float(np.clip(raw_u_price * multiplier, 0.001, 2.0))
+                        u_price = float(np.clip(raw_u_price * multiplier, 0.001, tou_cap))
 
                         ind_order = Order(
                             agent_id=agent.agent_id,
@@ -398,20 +400,26 @@ class EnergyTradingEnv:
 
             rewards[agent_id] = agent.get_reward(hour)
 
-            fit_price   = self.config.fit_price
-            tou_price   = self.config.tou_price
-            buy_cost    = sum(t.price * t.quantity for t in trades_as_buyer)
-            sell_income = sum(t.price * t.quantity for t in trades_as_seller)
-            grid_cost   = grid_purchased * tou_price - grid_sold * fit_price
+            fit_price        = self.config.fit_price
+            tou_price        = self.config.tou_price
+            buy_cost         = sum(t.price * t.quantity for t in trades_as_buyer)
+            sell_income      = sum(t.price * t.quantity for t in trades_as_seller)
+            grid_sell_income = grid_sold * fit_price
+            grid_buy_cost    = grid_purchased * tou_price
+            net_cost         = buy_cost + grid_buy_cost - sell_income - grid_sell_income
             self.metrics.record_agent_hour(
                 agent_id=agent_id,
-                cost=buy_cost - sell_income + grid_cost,
+                cost=net_cost,
                 bought=bought_kwh,
                 sold=sold_kwh,
                 unmet=unmet_demand,
                 curtailed=curtailed_surplus,
                 grid_purchased=grid_purchased,
                 grid_sold=grid_sold,
+                p2p_sell_income=sell_income,
+                p2p_buy_cost=buy_cost,
+                grid_sell_income=grid_sell_income,
+                grid_buy_cost=grid_buy_cost,
             )
 
         # --- Step 7: Record hourly metrics ---

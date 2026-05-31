@@ -91,9 +91,14 @@ class BaselineAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def _buyer_price(self, quantity: float, hour: int) -> float:
-        """Alıcı teklif fiyatı: MB (Marginal Benefit) eğrisindeki formüle göre."""
+        """Alıcı teklif fiyatı: MB eğrisi, ancak ToU tavanıyla sınırlı.
+
+        Grid fallback varken rasyonel alıcı asla ToU'dan fazla ödemez:
+        P2P'de ToU'dan pahalıya almak yerine grid'den alır.
+        """
+        tou = getattr(self.config, "tou_price", 0.28)
         price = self.compute_mb(quantity, hour=hour)
-        return float(np.clip(price, 0.001, 2.0))
+        return float(np.clip(price, 0.001, tou))
 
     def _seller_price(self, quantity: float) -> float:
         """Satıcı istek fiyatı: Use-It-or-Lose-It (UILI) üstel formülüne göre."""

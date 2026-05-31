@@ -44,6 +44,11 @@ class MetricsCollector:
         self.agent_total_curtailed: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
         self.agent_grid_purchased: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
         self.agent_grid_sold: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
+        # Gelir/maliyet ayrıştırması (hocanın istediği)
+        self.agent_p2p_sell_income: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
+        self.agent_p2p_buy_cost: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
+        self.agent_grid_sell_income: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
+        self.agent_grid_buy_cost: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
     
     def record_hour(self, metrics: HourlyMetrics):
         """Record metrics for one hour."""
@@ -59,6 +64,10 @@ class MetricsCollector:
         curtailed: float,
         grid_purchased: float = 0.0,
         grid_sold: float = 0.0,
+        p2p_sell_income: float = 0.0,
+        p2p_buy_cost: float = 0.0,
+        grid_sell_income: float = 0.0,
+        grid_buy_cost: float = 0.0,
     ):
         """Record per-agent results for one hour."""
         self.agent_total_cost[agent_id] += cost
@@ -68,6 +77,10 @@ class MetricsCollector:
         self.agent_total_curtailed[agent_id] += curtailed
         self.agent_grid_purchased[agent_id] += grid_purchased
         self.agent_grid_sold[agent_id] += grid_sold
+        self.agent_p2p_sell_income[agent_id] += p2p_sell_income
+        self.agent_p2p_buy_cost[agent_id] += p2p_buy_cost
+        self.agent_grid_sell_income[agent_id] += grid_sell_income
+        self.agent_grid_buy_cost[agent_id] += grid_buy_cost
     
     # ---- Aggregate metrics ----
     
@@ -126,6 +139,32 @@ class MetricsCollector:
         total = p2p + grid
         return p2p / total if total > 0 else 0.0
     
+    def total_seller_revenue(self, n_producers: int) -> float:
+        """Toplam satıcı geliri = P2P geliri + grid FiT geliri (üretici ajanlar)."""
+        return sum(
+            self.agent_p2p_sell_income[i] + self.agent_grid_sell_income[i]
+            for i in range(n_producers)
+        )
+
+    def total_buyer_cost(self, n_producers: int) -> float:
+        """Toplam alıcı maliyeti = P2P alım maliyeti + grid ToU maliyeti (tüketici ajanlar)."""
+        return sum(
+            self.agent_p2p_buy_cost[i] + self.agent_grid_buy_cost[i]
+            for i in range(n_producers, self.n_agents)
+        )
+
+    def total_p2p_sell_income(self, n_producers: int) -> float:
+        return sum(self.agent_p2p_sell_income[i] for i in range(n_producers))
+
+    def total_grid_sell_income(self, n_producers: int) -> float:
+        return sum(self.agent_grid_sell_income[i] for i in range(n_producers))
+
+    def total_p2p_buy_cost(self, n_producers: int) -> float:
+        return sum(self.agent_p2p_buy_cost[i] for i in range(n_producers, self.n_agents))
+
+    def total_grid_buy_cost(self, n_producers: int) -> float:
+        return sum(self.agent_grid_buy_cost[i] for i in range(n_producers, self.n_agents))
+
     def get_agent_bills(self) -> Dict[int, float]:
         """Get final energy bills for all agents."""
         return dict(self.agent_total_cost)
@@ -164,4 +203,33 @@ class MetricsCollector:
         
         lines.append("")
         lines.append("=" * 60)
+        return "\n".join(lines)
+
+    def summary_welfare(self, n_producers: int) -> str:
+        """Hocanın istediği: satıcı geliri ve alıcı maliyet ayrıştırması."""
+        p2p_sell  = self.total_p2p_sell_income(n_producers)
+        grid_sell = self.total_grid_sell_income(n_producers)
+        p2p_buy   = self.total_p2p_buy_cost(n_producers)
+        grid_buy  = self.total_grid_buy_cost(n_producers)
+        tot_sell  = p2p_sell + grid_sell
+        tot_buy   = p2p_buy + grid_buy
+
+        lines = [
+            "=" * 60,
+            "  SATICI GELİRİ & ALICI MALİYET ANALİZİ",
+            "=" * 60,
+            "",
+            f"  --- Satıcı Geliri (Producer agents 0-{n_producers-1}) ---",
+            f"  P2P Geliri:           ${p2p_sell:>10.4f}",
+            f"  Grid FiT Geliri:      ${grid_sell:>10.4f}",
+            f"  TOPLAM SATICI GELİRİ: ${tot_sell:>10.4f}",
+            "",
+            f"  --- Alıcı Maliyeti (Consumer agents {n_producers}-{self.n_agents-1}) ---",
+            f"  P2P Alım Maliyeti:    ${p2p_buy:>10.4f}",
+            f"  Grid ToU Maliyeti:    ${grid_buy:>10.4f}",
+            f"  TOPLAM ALICI MALİYETİ:${tot_buy:>10.4f}",
+            "",
+            f"  P2P Zero-Sum Kontrolü (P2P gelir - P2P maliyet): ${p2p_sell - p2p_buy:.4f}",
+            "=" * 60,
+        ]
         return "\n".join(lines)
