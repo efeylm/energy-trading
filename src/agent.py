@@ -176,28 +176,45 @@ class EnergyAgent:
         unmet_demand: float,
         curtailed_surplus: float,
         hour: int,
+        grid_purchased: float = 0.0,
+        grid_sold: float = 0.0,
     ):
-        """Update internal state and tracking."""
-        buy_cost = sum(t.price * t.quantity for t in trades_as_buyer)
+        """Update internal state and tracking.
+
+        grid_purchased : kWh bought from grid at ToU (buyer fallback)
+        grid_sold      : kWh sold to grid at FiT    (seller fallback)
+        """
+        buy_cost    = sum(t.price * t.quantity for t in trades_as_buyer)
         sell_income = sum(t.price * t.quantity for t in trades_as_seller)
-        bought_kwh = sum(t.quantity for t in trades_as_buyer)
-        sold_kwh = sum(t.quantity for t in trades_as_seller)
-        
-        net_cost = buy_cost - sell_income
-        self.total_cost += net_cost
+        bought_kwh  = sum(t.quantity for t in trades_as_buyer)
+        sold_kwh    = sum(t.quantity for t in trades_as_seller)
+
+        fit_price = getattr(self.config, "fit_price", 0.06)
+        tou_price = getattr(self.config, "tou_price", 0.28)
+
+        # Grid işlem maliyetleri
+        grid_buy_cost    = grid_purchased * tou_price
+        grid_sell_income = grid_sold * fit_price
+
+        net_cost = (buy_cost + grid_buy_cost) - (sell_income + grid_sell_income)
+        self.total_cost       += net_cost
         self.total_traded_kwh += bought_kwh + sold_kwh
-        self.unmet_demand += unmet_demand
+        self.unmet_demand     += unmet_demand
         self.curtailed_energy += curtailed_surplus
-        
+
         self.hourly_log.append({
-            "hour": hour,
-            "buy_cost": buy_cost,
-            "sell_income": sell_income,
-            "net_cost": net_cost,
-            "bought_kwh": bought_kwh,
-            "sold_kwh": sold_kwh,
-            "unmet_demand": unmet_demand,
-            "curtailed": curtailed_surplus,
+            "hour":           hour,
+            "buy_cost":       buy_cost,
+            "sell_income":    sell_income,
+            "net_cost":       net_cost,
+            "bought_kwh":     bought_kwh,
+            "sold_kwh":       sold_kwh,
+            "unmet_demand":   unmet_demand,
+            "curtailed":      curtailed_surplus,
+            "grid_purchased": grid_purchased,
+            "grid_sold":      grid_sold,
+            "grid_buy_cost":  grid_buy_cost,
+            "grid_sell_income": grid_sell_income,
         })
     
     # --- Iterative Auction logic (simplified) ---
@@ -276,23 +293,30 @@ class EnergyAgent:
         curtailed   = last.get("curtailed", 0.0)
         sell_income = last.get("sell_income", 0.0)
 
-        is_seller = (sold_kwh + curtailed) > 1e-6
+        grid_sold      = last.get("grid_sold", 0.0)
+        grid_sell_inc  = last.get("grid_sell_income", 0.0)
+        is_seller = (sold_kwh + curtailed + grid_sold) > 1e-6
 
         if is_seller:
-            # Temel reward: matched_qty × clearing_price + unmatched_qty × curtail_rate
-            # curtail_rate = 0.0 → satamadıysan sıfır kazanırsın (eski: FiT=+$0.06)
-            curtail_rate  = getattr(self.config, "reward_curtail_rate", 0.0)
-            unmatched_reward = curtailed * curtail_rate
-            reward = sell_income + unmatched_reward
+            # Grid fallback varsa: eşleşemeyen enerji → grid'e FiT'ten satıldı.
+            # P2P geliri > FiT geliri → ajan P2P'yi tercih etmeyi öğrenir.
+            grid_fallback = getattr(self.config, "grid_fallback", False)
+            if grid_fallback:
+                # Satıcı: P2P geliri + grid FiT geliri
+                reward = sell_income + grid_sell_inc
+            else:
+                curtail_rate     = getattr(self.config, "reward_curtail_rate", 0.0)
+                unmatched_reward = curtailed * curtail_rate
+                reward           = sell_income + unmatched_reward
 
-            # β fiyat primi: FiT üzerinde satılan her kWh için ekstra ödül
-            # Bu terim ajana "fiyatı gereksiz yere düşürme" sinyali verir.
-            # price_premium = sold_kwh × (avg_clearing_price - FiT)
+            # β fiyat primi: FiT üzerinde P2P'de satılan her kWh için ekstra ödül
+            # Ajan "daha yüksek fiyattan eşleş" sinyali alır.
             if beta > 0.0 and sold_kwh > 1e-6:
                 price_premium = sell_income - sold_kwh * fit_price
                 reward += beta * price_premium
         else:
-            # Alıcı: maliyet minimize (reward = -net_cost)
+            # Alıcı: tüm maliyet (P2P + grid ToU) minimize edilir.
+            # net_cost zaten grid maliyetini içeriyor (process_trade_results'da eklendi).
             reward = -last["net_cost"]
 
         return reward

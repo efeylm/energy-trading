@@ -241,30 +241,42 @@ class EnergyTradingEnv:
             # actions effective in the market.
             
             if order.is_buy:
-                # 1. Get base price at full quantity to find the multiplier
-                base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
-                multiplier = order.price / base_price if base_price > 1e-6 else 1.0
-                
-                # BUYERS: Every unit (0.5 kWh) is submitted as its own Order.
-                # Strictly diminishing prices (MB curve shifted by multiplier).
-                for k in range(n_units):
-                    cum_qty    = k * unit_size
-                    actual_qty = min(unit_size, order.quantity - cum_qty)
-                    if actual_qty <= 1e-9:
-                        break
-                    
-                    raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
-                    u_price = float(np.clip(raw_u_price * multiplier, 0.001, 2.0))
-                    
-                    ind_order = Order(
+                if order.use_flat_price:
+                    # QL / NN alıcı: öğrenilmiş tek sabit fiyat — MB eğrisi uygulanmaz.
+                    # Ajan gerçekten ne kadar ödemek istediğini söylüyor.
+                    agg_buy = Order(
                         agent_id=agent.agent_id,
-                        price=u_price,
-                        quantity=actual_qty,
+                        price=float(np.clip(order.price, 0.001, 2.0)),
+                        quantity=order.quantity,
                         is_buy=True,
                         is_emergency=order.is_emergency,
+                        use_flat_price=True,
                     )
-                    self.market.submit_order(ind_order)
-                    unit_orders.append(ind_order)
+                    self.market.submit_order(agg_buy)
+                    unit_orders.append(agg_buy)
+                else:
+                    # Baseline heuristic: MB eğrisi × multiplier ile ünite bazlı emir.
+                    base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
+                    multiplier = order.price / base_price if base_price > 1e-6 else 1.0
+
+                    for k in range(n_units):
+                        cum_qty    = k * unit_size
+                        actual_qty = min(unit_size, order.quantity - cum_qty)
+                        if actual_qty <= 1e-9:
+                            break
+
+                        raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
+                        u_price = float(np.clip(raw_u_price * multiplier, 0.001, 2.0))
+
+                        ind_order = Order(
+                            agent_id=agent.agent_id,
+                            price=u_price,
+                            quantity=actual_qty,
+                            is_buy=True,
+                            is_emergency=order.is_emergency,
+                        )
+                        self.market.submit_order(ind_order)
+                        unit_orders.append(ind_order)
             else:
                 # SELLERS: Currently using a flat price for total quantity.
                 # We use the agent's decided price (which includes their strategy).
@@ -320,6 +332,8 @@ class EnergyTradingEnv:
         rewards = {}
         total_unmet = 0.0
         total_curtailed = 0.0
+        total_grid_purchased = 0.0
+        total_grid_sold = 0.0
         n_starvation = 0
         agent_battery_soc = {}
 
@@ -354,29 +368,50 @@ class EnergyTradingEnv:
             if unmet_demand > 0.01:
                 n_starvation += 1
 
-            total_unmet      += unmet_demand
-            total_curtailed  += curtailed_surplus
+            # --- Grid fallback ---
+            # P2P'de eşleşemeyen alıcı → grid'den ToU fiyatıyla alır
+            # P2P'de eşleşemeyen satıcı → grid'e FiT fiyatıyla satar
+            grid_fallback = getattr(self.config, "grid_fallback", False)
+            if grid_fallback:
+                grid_purchased    = unmet_demand
+                grid_sold         = curtailed_surplus
+                unmet_demand      = 0.0   # grid tamamen karşıladı
+                curtailed_surplus = 0.0   # grid tamamen aldı
+            else:
+                grid_purchased = 0.0
+                grid_sold      = 0.0
 
-            # PartialTrade has the same fields as Trade used by process_trade_results
+            total_unmet     += unmet_demand
+            total_curtailed += curtailed_surplus
+            total_grid_purchased += grid_purchased
+            total_grid_sold      += grid_sold
+
             agent.process_trade_results(
                 trades_as_buyer=trades_as_buyer,
                 trades_as_seller=trades_as_seller,
                 unmet_demand=unmet_demand,
                 curtailed_surplus=curtailed_surplus,
                 hour=hour,
+                grid_purchased=grid_purchased,
+                grid_sold=grid_sold,
             )
 
             rewards[agent_id] = agent.get_reward(hour)
 
+            fit_price   = self.config.fit_price
+            tou_price   = self.config.tou_price
             buy_cost    = sum(t.price * t.quantity for t in trades_as_buyer)
             sell_income = sum(t.price * t.quantity for t in trades_as_seller)
+            grid_cost   = grid_purchased * tou_price - grid_sold * fit_price
             self.metrics.record_agent_hour(
                 agent_id=agent_id,
-                cost=buy_cost - sell_income,
+                cost=buy_cost - sell_income + grid_cost,
                 bought=bought_kwh,
                 sold=sold_kwh,
                 unmet=unmet_demand,
                 curtailed=curtailed_surplus,
+                grid_purchased=grid_purchased,
+                grid_sold=grid_sold,
             )
 
         # --- Step 7: Record hourly metrics ---
@@ -389,6 +424,8 @@ class EnergyTradingEnv:
             total_curtailed=total_curtailed,
             n_buyers=n_buyers,
             n_sellers=n_sellers,
+            total_grid_purchased=total_grid_purchased,
+            total_grid_sold=total_grid_sold,
         )
         self.metrics.record_hour(hourly)
 

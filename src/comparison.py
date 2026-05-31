@@ -128,9 +128,10 @@ def _print_comparison_3way(
     ql_price = ql_metrics.average_clearing_price()
     nn_price = nn_metrics.average_clearing_price()
 
-    bl_reward = -(bl_unmet * 5.0 + bl_curt * 2.0)
-    ql_reward = -(ql_unmet * 5.0 + ql_curt * 2.0)
-    nn_reward = -(nn_unmet * 5.0 + nn_curt * 2.0)
+    # P2P Oranı: P2P hacminin toplam enerji akışına oranı (yüksek = iyi)
+    bl_reward = bl_metrics.p2p_ratio() * 100
+    ql_reward = ql_metrics.p2p_ratio() * 100
+    nn_reward = nn_metrics.p2p_ratio() * 100
 
     n_prod = bl_metrics.n_agents // 2
     bl_seller_rev = sum(-bl_metrics.agent_total_cost[i] for i in range(n_prod))
@@ -149,26 +150,30 @@ def _print_comparison_3way(
         if file is not None:
             file.write(line + "\n")
 
+    bl_grid_p = bl_metrics.total_grid_purchased()
+    ql_grid_p = ql_metrics.total_grid_purchased()
+    nn_grid_p = nn_metrics.total_grid_purchased()
+    bl_grid_s = bl_metrics.total_grid_sold()
+    ql_grid_s = ql_metrics.total_grid_sold()
+    nn_grid_s = nn_metrics.total_grid_sold()
+
     rows = [
-        ("Sistem Basari Skoru",
-         f"{bl_reward:>10.2f}", f"{ql_reward:>10.2f}", f"{nn_reward:>10.2f}",
+        ("P2P Orani (%)",
+         f"{bl_reward:>10.1f}", f"{ql_reward:>10.1f}", f"{nn_reward:>10.1f}",
          _pct(ql_reward, bl_reward), _pct(nn_reward, bl_reward)),
+        ("P2P Ticaret (kWh)",
+         f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", f"{nn_trade:>10.2f}",
+         _pct(ql_trade, bl_trade), _pct(nn_trade, bl_trade)),
+        ("Grid Alim/ToU (kWh)",
+         f"{bl_grid_p:>10.2f}", f"{ql_grid_p:>10.2f}", f"{nn_grid_p:>10.2f}",
+         _pct(ql_grid_p, bl_grid_p), _pct(nn_grid_p, bl_grid_p)),
+        ("Grid Satim/FiT (kWh)",
+         f"{bl_grid_s:>10.2f}", f"{ql_grid_s:>10.2f}", f"{nn_grid_s:>10.2f}",
+         _pct(ql_grid_s, bl_grid_s), _pct(nn_grid_s, bl_grid_s)),
         ("Satici Geliri ($)",
          f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", f"{nn_seller_rev:>10.2f}",
          _pct(ql_seller_rev, bl_seller_rev), _pct(nn_seller_rev, bl_seller_rev)),
-        ("Net Transfer Dengesi ($)",
-         f"{bl_cost:>10.4f}", f"{ql_cost:>10.4f}", f"{nn_cost:>10.4f}",
-         "      OK", "      OK"),
-        ("Toplam Ticaret (kWh)",
-         f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", f"{nn_trade:>10.2f}",
-         _pct(ql_trade, bl_trade), _pct(nn_trade, bl_trade)),
-        ("Karsilanmayan (kWh)",
-         f"{bl_unmet:>10.2f}", f"{ql_unmet:>10.2f}", f"{nn_unmet:>10.2f}",
-         _pct(ql_unmet, bl_unmet), _pct(nn_unmet, bl_unmet)),
-        ("Kisitlama (kWh)",
-         f"{bl_curt:>10.2f}", f"{ql_curt:>10.2f}", f"{nn_curt:>10.2f}",
-         _pct(ql_curt, bl_curt), _pct(nn_curt, bl_curt)),
-        ("Ort. Takas Fiyati ($/kWh)",
+        ("Ort. P2P Fiyati ($/kWh)",
          f"{bl_price:>10.4f}", f"{ql_price:>10.4f}", f"{nn_price:>10.4f}",
          _pct(ql_price, bl_price), _pct(nn_price, bl_price)),
     ]

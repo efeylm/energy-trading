@@ -225,6 +225,7 @@ class QLearningAgent(EnergyAgent):
                 quantity=net,
                 is_buy=True,
                 is_emergency=False,
+                use_flat_price=True,
             )
         elif net < -0.01:
             # SATICI: Satıcı Q-tablosundan flat ask fiyatı seç

@@ -102,6 +102,12 @@ class SimConfig:
     # Negatif değer : curtailed × (-x) → aktif ceza
     reward_curtail_rate: float = -0.03
 
+    # --- Grid fallback ---
+    # True  → P2P'de eşleşemeyen alıcı grid'den ToU'dan alır,
+    #          P2P'de eşleşemeyen satıcı grid'e FiT'ten satar.
+    # False → Kapalı sistem (eski davranış).
+    grid_fallback: bool = True
+
     @property
     def n_agents(self) -> int:
         return self.n_producers + self.n_consumers

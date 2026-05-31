@@ -1,8 +1,8 @@
 
 ====================================================================================
           P2P ENERGY TRADING — OVERALL COMPARISON (Buyer+Seller Learning)           
-  Tarih : 2026-05-31 10:45:21
-  QL Episodes : 5000  |  NN Episodes : 5000
+  Tarih : 2026-05-31 12:52:51
+  QL Episodes : 1000  |  NN Episodes : 10000
   beta=1.50  |  curtail_rate=0.00
   Modeller: Baseline | QL(Alici+Satici) | NN(Alici+Satici)
 ====================================================================================
@@ -17,66 +17,69 @@
 ============================================================
 
   Total hours simulated:       48
-  Total internal trading:      76.61 kWh
-  Total unmet demand:          1180.34 kWh
-  Total curtailment:           215.00 kWh
-  Average clearing price:      $0.4653/kWh
+  P2P Trading:                 76.61 kWh
+  Grid Purchased (ToU):        1180.34 kWh
+  Grid Sold (FiT):             215.00 kWh
+  P2P Ratio:                   5.2%
+  Average P2P Price:           $0.4653/kWh
 
-  --- Agent Energy Bills ---
-    Agent 0: Bill=$-7.4756, Bought=0.00kWh, Sold=10.35kWh, Unmet=28.33kWh
-    Agent 1: Bill=$-7.6578, Bought=0.00kWh, Sold=7.90kWh, Unmet=33.89kWh
-    Agent 2: Bill=$-2.8616, Bought=0.00kWh, Sold=7.47kWh, Unmet=40.15kWh
-    Agent 3: Bill=$-17.6511, Bought=0.00kWh, Sold=50.89kWh, Unmet=47.46kWh
-    Agent 4: Bill=$6.7188, Bought=15.93kWh, Sold=0.00kWh, Unmet=220.93kWh
-    Agent 5: Bill=$5.9285, Bought=15.89kWh, Sold=0.00kWh, Unmet=250.06kWh
-    Agent 6: Bill=$20.7341, Bought=32.29kWh, Sold=0.00kWh, Unmet=257.49kWh
-    Agent 7: Bill=$2.2647, Bought=12.50kWh, Sold=0.00kWh, Unmet=302.03kWh
-
-============================================================
-
-[ADIM 2/3] Q-LEARNING SONUÇLARI (5000 ep)
-============================================================
-       SIMULATION RESULTS SUMMARY
-============================================================
-
-  Total hours simulated:       48
-  Total internal trading:      242.70 kWh
-  Total unmet demand:          1014.24 kWh
-  Total curtailment:           48.91 kWh
-  Average clearing price:      $0.6194/kWh
-
-  --- Agent Energy Bills ---
-    Agent 0: Bill=$-12.2832, Bought=0.00kWh, Sold=30.51kWh, Unmet=28.33kWh
-    Agent 1: Bill=$-20.9564, Bought=0.00kWh, Sold=53.26kWh, Unmet=33.89kWh
-    Agent 2: Bill=$-46.1165, Bought=0.00kWh, Sold=75.99kWh, Unmet=40.15kWh
-    Agent 3: Bill=$-70.9757, Bought=0.00kWh, Sold=82.95kWh, Unmet=47.46kWh
-    Agent 4: Bill=$35.7345, Bought=57.65kWh, Sold=0.00kWh, Unmet=179.22kWh
-    Agent 5: Bill=$29.5737, Bought=57.12kWh, Sold=0.00kWh, Unmet=208.83kWh
-    Agent 6: Bill=$54.1026, Bought=65.36kWh, Sold=0.00kWh, Unmet=224.42kWh
-    Agent 7: Bill=$30.9210, Bought=62.58kWh, Sold=0.00kWh, Unmet=251.95kWh
+  --- Agent Energy Bills (P2P + Grid) ---
+    Agent 0: Bill=$-2.6719, P2P Buy=0.00kWh, P2P Sell=10.35kWh, Grid Buy=28.33kWh, Grid Sell=52.13kWh
+    Agent 1: Bill=$-1.8386, P2P Buy=0.00kWh, P2P Sell=7.90kWh, Grid Buy=33.89kWh, Grid Sell=61.18kWh
+    Agent 2: Bill=$4.2034, P2P Buy=0.00kWh, P2P Sell=7.47kWh, Grid Buy=40.15kWh, Grid Sell=69.63kWh
+    Agent 3: Bill=$-6.2872, P2P Buy=0.00kWh, P2P Sell=50.89kWh, Grid Buy=47.46kWh, Grid Sell=32.06kWh
+    Agent 4: Bill=$68.5800, P2P Buy=15.93kWh, P2P Sell=0.00kWh, Grid Buy=220.93kWh, Grid Sell=0.00kWh
+    Agent 5: Bill=$75.9450, P2P Buy=15.89kWh, P2P Sell=0.00kWh, Grid Buy=250.06kWh, Grid Sell=0.00kWh
+    Agent 6: Bill=$92.8314, P2P Buy=32.29kWh, P2P Sell=0.00kWh, Grid Buy=257.49kWh, Grid Sell=0.00kWh
+    Agent 7: Bill=$86.8325, P2P Buy=12.50kWh, P2P Sell=0.00kWh, Grid Buy=302.03kWh, Grid Sell=0.00kWh
 
 ============================================================
 
-[ADIM 3/3] REINFORCE-NN SONUÇLARI (5000 ep)
+[ADIM 2/3] Q-LEARNING SONUÇLARI (1000 ep)
 ============================================================
        SIMULATION RESULTS SUMMARY
 ============================================================
 
   Total hours simulated:       48
-  Total internal trading:      245.49 kWh
-  Total unmet demand:          1011.46 kWh
-  Total curtailment:           46.12 kWh
-  Average clearing price:      $0.7147/kWh
+  P2P Trading:                 235.15 kWh
+  Grid Purchased (ToU):        1021.80 kWh
+  Grid Sold (FiT):             56.47 kWh
+  P2P Ratio:                   17.9%
+  Average P2P Price:           $0.1415/kWh
 
-  --- Agent Energy Bills ---
-    Agent 0: Bill=$-48.4605, Bought=0.00kWh, Sold=62.48kWh, Unmet=28.33kWh
-    Agent 1: Bill=$-14.4231, Bought=0.00kWh, Sold=36.77kWh, Unmet=33.89kWh
-    Agent 2: Bill=$-78.3228, Bought=0.00kWh, Sold=77.09kWh, Unmet=40.15kWh
-    Agent 3: Bill=$-34.2367, Bought=0.00kWh, Sold=69.14kWh, Unmet=47.46kWh
-    Agent 4: Bill=$45.6554, Bought=60.34kWh, Sold=0.00kWh, Unmet=176.53kWh
-    Agent 5: Bill=$42.0686, Bought=61.94kWh, Sold=0.00kWh, Unmet=204.01kWh
-    Agent 6: Bill=$56.6324, Bought=63.21kWh, Sold=0.00kWh, Unmet=226.57kWh
-    Agent 7: Bill=$31.0866, Bought=60.01kWh, Sold=0.00kWh, Unmet=254.52kWh
+  --- Agent Energy Bills (P2P + Grid) ---
+    Agent 0: Bill=$1.0878, P2P Buy=0.00kWh, P2P Sell=39.20kWh, Grid Buy=28.33kWh, Grid Sell=23.29kWh
+    Agent 1: Bill=$1.5730, P2P Buy=0.00kWh, P2P Sell=53.97kWh, Grid Buy=33.89kWh, Grid Sell=15.11kWh
+    Agent 2: Bill=$0.9483, P2P Buy=0.00kWh, P2P Sell=71.22kWh, Grid Buy=40.15kWh, Grid Sell=5.87kWh
+    Agent 3: Bill=$1.6719, P2P Buy=0.00kWh, P2P Sell=70.75kWh, Grid Buy=47.46kWh, Grid Sell=12.20kWh
+    Agent 4: Bill=$58.8738, P2P Buy=60.42kWh, P2P Sell=0.00kWh, Grid Buy=176.44kWh, Grid Sell=0.00kWh
+    Agent 5: Bill=$65.8926, P2P Buy=70.19kWh, P2P Sell=0.00kWh, Grid Buy=195.76kWh, Grid Sell=0.00kWh
+    Agent 6: Bill=$72.5179, P2P Buy=57.40kWh, P2P Sell=0.00kWh, Grid Buy=232.38kWh, Grid Sell=0.00kWh
+    Agent 7: Bill=$80.1516, P2P Buy=47.14kWh, P2P Sell=0.00kWh, Grid Buy=267.39kWh, Grid Sell=0.00kWh
+
+============================================================
+
+[ADIM 3/3] REINFORCE-NN SONUÇLARI (10000 ep)
+============================================================
+       SIMULATION RESULTS SUMMARY
+============================================================
+
+  Total hours simulated:       48
+  P2P Trading:                 245.49 kWh
+  Grid Purchased (ToU):        1011.46 kWh
+  Grid Sold (FiT):             46.12 kWh
+  P2P Ratio:                   18.8%
+  Average P2P Price:           $0.1237/kWh
+
+  --- Agent Energy Bills (P2P + Grid) ---
+    Agent 0: Bill=$1.6320, P2P Buy=0.00kWh, P2P Sell=48.67kWh, Grid Buy=28.33kWh, Grid Sell=13.81kWh
+    Agent 1: Bill=$3.9693, P2P Buy=0.00kWh, P2P Sell=36.77kWh, Grid Buy=33.89kWh, Grid Sell=32.31kWh
+    Agent 2: Bill=$1.5966, P2P Buy=0.74kWh, P2P Sell=77.09kWh, Grid Buy=39.41kWh, Grid Sell=0.00kWh
+    Agent 3: Bill=$1.5440, P2P Buy=0.00kWh, P2P Sell=82.95kWh, Grid Buy=47.46kWh, Grid Sell=0.00kWh
+    Agent 4: Bill=$58.5114, P2P Buy=37.05kWh, P2P Sell=0.00kWh, Grid Buy=199.82kWh, Grid Sell=0.00kWh
+    Agent 5: Bill=$63.8277, P2P Buy=78.59kWh, P2P Sell=0.00kWh, Grid Buy=187.36kWh, Grid Sell=0.00kWh
+    Agent 6: Bill=$71.3760, P2P Buy=66.62kWh, P2P Sell=0.00kWh, Grid Buy=223.16kWh, Grid Sell=0.00kWh
+    Agent 7: Bill=$77.9836, P2P Buy=62.50kWh, P2P Sell=0.00kWh, Grid Buy=252.03kWh, Grid Sell=0.00kWh
 
 ============================================================
 
@@ -85,13 +88,12 @@
 +==================================================================================+
 |  Metrik                       Baseline    QL(B+S)    NN(B+S)      ΔQL      ΔNN  |
 |  ------------------------------------------------------------------------------  |
-|  Sistem Basari Skoru          -6331.69   -5169.03   -5149.53   +18.4%   +18.7%  |
-|  Satici Geliri ($)               35.65     150.33     175.44  +321.7%  +392.2%  |
-|  Net Transfer Dengesi ($)       0.0000     0.0000    -0.0000        OK        OK  |
-|  Toplam Ticaret (kWh)            76.61     242.70     245.49  +216.8%  +220.4%  |
-|  Karsilanmayan (kWh)           1180.34    1014.24    1011.46   -14.1%   -14.3%  |
-|  Kisitlama (kWh)                215.00      48.91      46.12   -77.3%   -78.5%  |
-|  Ort. Takas Fiyati ($/kWh)      0.4653     0.6194     0.7147   +33.1%   +53.6%  |
+|  P2P Orani (%)                     5.2       17.9       18.8  +244.0%  +262.0%  |
+|  P2P Ticaret (kWh)               76.61     235.15     245.49  +206.9%  +220.4%  |
+|  Grid Alim/ToU (kWh)           1180.34    1021.80    1011.46   -13.4%   -14.3%  |
+|  Grid Satim/FiT (kWh)           215.00      56.47      46.12   -73.7%   -78.5%  |
+|  Satici Geliri ($)                6.59      -5.28      -8.74  -180.1%  -232.6%  |
+|  Ort. P2P Fiyati ($/kWh)        0.4653     0.1415     0.1237   -69.6%   -73.4%  |
 +==================================================================================+
   (ΔQL, ΔNN = Baseline'a göre değişim yüzdesi)
 

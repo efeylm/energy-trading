@@ -19,12 +19,14 @@ class HourlyMetrics:
     """Metrics collected at the end of each auction period (hour)."""
     hour: int
     average_price: float            # $/kWh average clearing price
-    total_traded_kwh: float         # Total energy traded in DA
+    total_traded_kwh: float         # Total energy traded in P2P
     n_trades: int                   # Number of individual trades
-    total_unmet_demand: float       # kWh of demand that couldn't be met
-    total_curtailed: float          # kWh of surplus that was curtailed
+    total_unmet_demand: float       # kWh of demand unmet after grid fallback (0 if grid_fallback=True)
+    total_curtailed: float          # kWh of surplus curtailed after grid fallback (0 if grid_fallback=True)
     n_buyers: int                   # Number of agents that submitted buy orders
     n_sellers: int                  # Number of agents that submitted sell orders
+    total_grid_purchased: float = 0.0  # kWh bought from grid at ToU
+    total_grid_sold: float = 0.0       # kWh sold to grid at FiT
 
 
 class MetricsCollector:
@@ -40,6 +42,8 @@ class MetricsCollector:
         self.agent_total_sold: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
         self.agent_total_unmet: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
         self.agent_total_curtailed: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
+        self.agent_grid_purchased: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
+        self.agent_grid_sold: Dict[int, float] = {i: 0.0 for i in range(n_agents)}
     
     def record_hour(self, metrics: HourlyMetrics):
         """Record metrics for one hour."""
@@ -53,6 +57,8 @@ class MetricsCollector:
         sold: float,
         unmet: float,
         curtailed: float,
+        grid_purchased: float = 0.0,
+        grid_sold: float = 0.0,
     ):
         """Record per-agent results for one hour."""
         self.agent_total_cost[agent_id] += cost
@@ -60,6 +66,8 @@ class MetricsCollector:
         self.agent_total_sold[agent_id] += sold
         self.agent_total_unmet[agent_id] += unmet
         self.agent_total_curtailed[agent_id] += curtailed
+        self.agent_grid_purchased[agent_id] += grid_purchased
+        self.agent_grid_sold[agent_id] += grid_sold
     
     # ---- Aggregate metrics ----
     
@@ -98,6 +106,25 @@ class MetricsCollector:
         if total_volume == 0:
             return 0.0
         return total_value / total_volume
+
+    def total_grid_purchased(self) -> float:
+        """Total kWh purchased from grid at ToU (grid fallback)."""
+        return sum(h.total_grid_purchased for h in self.hourly)
+
+    def total_grid_sold(self) -> float:
+        """Total kWh sold to grid at FiT (grid fallback)."""
+        return sum(h.total_grid_sold for h in self.hourly)
+
+    def p2p_ratio(self) -> float:
+        """Fraction of total energy flow handled by P2P (vs grid fallback).
+
+        P2P ratio = P2P_volume / (P2P_volume + grid_purchased + grid_sold)
+        Higher = more efficient P2P market.
+        """
+        p2p = self.total_internal_trading()
+        grid = self.total_grid_purchased() + self.total_grid_sold()
+        total = p2p + grid
+        return p2p / total if total > 0 else 0.0
     
     def get_agent_bills(self) -> Dict[int, float]:
         """Get final energy bills for all agents."""
@@ -105,31 +132,34 @@ class MetricsCollector:
     
     def summary(self) -> str:
         """Generate a text summary of the simulation results."""
+        grid_p = self.total_grid_purchased()
+        grid_s = self.total_grid_sold()
         lines = [
             "=" * 60,
             "       SIMULATION RESULTS SUMMARY",
             "=" * 60,
             "",
             f"  Total hours simulated:       {len(self.hourly)}",
-            f"  Total internal trading:      {self.total_internal_trading():.2f} kWh",
-            f"  Total unmet demand:          {self.total_unmet_demand():.2f} kWh",
-            f"  Total curtailment:           {self.total_curtailment():.2f} kWh",
-            f"  Average clearing price:      ${self.average_clearing_price():.4f}/kWh",
+            f"  P2P Trading:                 {self.total_internal_trading():.2f} kWh",
+            f"  Grid Purchased (ToU):        {grid_p:.2f} kWh",
+            f"  Grid Sold (FiT):             {grid_s:.2f} kWh",
+            f"  P2P Ratio:                   {self.p2p_ratio()*100:.1f}%",
+            f"  Average P2P Price:           ${self.average_clearing_price():.4f}/kWh",
             "",
-            "  --- Agent Energy Bills ---",
+            "  --- Agent Energy Bills (P2P + Grid) ---",
         ]
-        
+
         for agent_id in sorted(self.agent_total_cost.keys()):
-            cost = self.agent_total_cost[agent_id]
-            bought = self.agent_total_bought[agent_id]
-            sold = self.agent_total_sold[agent_id]
-            unmet = self.agent_total_unmet[agent_id]
+            cost    = self.agent_total_cost[agent_id]
+            bought  = self.agent_total_bought[agent_id]
+            sold    = self.agent_total_sold[agent_id]
+            g_buy   = self.agent_grid_purchased[agent_id]
+            g_sell  = self.agent_grid_sold[agent_id]
             lines.append(
                 f"    Agent {agent_id}: "
                 f"Bill=${cost:.4f}, "
-                f"Bought={bought:.2f}kWh, "
-                f"Sold={sold:.2f}kWh, "
-                f"Unmet={unmet:.2f}kWh"
+                f"P2P Buy={bought:.2f}kWh, P2P Sell={sold:.2f}kWh, "
+                f"Grid Buy={g_buy:.2f}kWh, Grid Sell={g_sell:.2f}kWh"
             )
         
         lines.append("")

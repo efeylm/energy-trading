@@ -334,6 +334,7 @@ class REINFORCEAgent(EnergyAgent):
                 quantity=net,
                 is_buy=True,
                 is_emergency=False,
+                use_flat_price=True,
             )
 
         else:
