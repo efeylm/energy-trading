@@ -175,9 +175,9 @@ def _print_comparison_3way(
 
     _w()
     _w("+" + "=" * width + "+")
-    _w(f"|{'  3-YOL KARSILASTIRMA: Baseline | Q-Learning | REINFORCE-NN':^{width}}|")
+    _w(f"|{'  3-YOL KARSILASTIRMA: Baseline | QL(Alici+Satici) | NN(Alici+Satici)':^{width}}|")
     _w("+" + "=" * width + "+")
-    _w(f"|  {'Metrik':<26} {'Baseline':>10} {'Q-Learn':>10} {'Deep-RL':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
+    _w(f"|  {'Metrik':<26} {'Baseline':>10} {'QL(B+S)':>10} {'NN(B+S)':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
     _w(f"|  {'-' * (width - 4)}  |")
     for label, bv, qv, nv, dql, dnn in rows:
         _w(f"|  {label:<26} {bv} {qv} {nv}  {dql}  {dnn}  |")
@@ -198,7 +198,7 @@ def plot_comparison(
     has_nn = nn_metrics is not None
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    title = ("3-Yol Karşılaştırma: Baseline | Q-Learning | REINFORCE-NN"
+    title = ("3-Yol Karşılaştırma: Baseline | QL(Alıcı+Satıcı) | NN(Alıcı+Satıcı)"
              if has_nn else "Q-Learning vs Baseline — Karşılaştırma")
     fig.suptitle(title, fontsize=15, fontweight="bold")
 
@@ -473,8 +473,8 @@ if __name__ == "__main__":
         help="Satılamayan enerji ödül oranı (varsayılan: -0.03)",
     )
     parser.add_argument(
-        "--log_name", type=str, default="simulation_results.log",
-        help="Log dosyası adı (varsayılan: simulation_results.log)",
+        "--log_name", type=str, default="overall_summary.txt",
+        help="Log dosyası adı (varsayılan: overall_summary.txt)",
     )
     args = parser.parse_args()
 
@@ -486,10 +486,11 @@ if __name__ == "__main__":
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         header = (
             f"\n{'='*84}\n"
-            f"{'P2P ENERGY TRADING — SIMULATION RESULTS':^84}\n"
+            f"{'P2P ENERGY TRADING — OVERALL COMPARISON (Buyer+Seller Learning)':^84}\n"
             f"  Tarih : {ts}\n"
             f"  QL Episodes : {args.episodes}  |  NN Episodes : {args.nn_episodes}\n"
             f"  beta={args.beta:.2f}  |  curtail_rate={args.curtail_rate:.2f}\n"
+            f"  Modeller: Baseline | QL(Alici+Satici) | NN(Alici+Satici)\n"
             f"{'='*84}\n"
         )
         print(header, end="")
