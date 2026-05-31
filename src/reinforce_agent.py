@@ -190,19 +190,30 @@ class REINFORCEAgent(EnergyAgent):
             [config.fit_price] * seq_len, maxlen=seq_len
         )
 
-        # Politika ağı (state_dim=5, seq_len, d_model) ve optimizer
+        # Satıcı politika ağı ve optimizer
         self.policy_net = PolicyNet(
             state_dim=5, seq_len=seq_len, d_model=d_model, hidden=hidden
         )
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
-        # Episode buffer:
-        #   _episode_mu  : μ = PolicyNet(s, hist) — gradient graph canlı
-        #   _episode_raw : ham örnek a_raw = μ + noise — detached, log_prob için
+        # Alıcı politika ağı ve optimizer (satıcıyla simetrik, ayrı ağırlıklar)
+        self.buy_policy_net = PolicyNet(
+            state_dim=5, seq_len=seq_len, d_model=d_model, hidden=hidden
+        )
+        self.buy_optimizer = optim.Adam(self.buy_policy_net.parameters(), lr=lr)
+
+        # Satıcı episode buffer
         self._episode_mu:  List[torch.Tensor] = []
         self._episode_raw: List[torch.Tensor] = []
         self._episode_rewards: List[float]    = []
-        self._last_was_seller: bool           = False
+
+        # Alıcı episode buffer
+        self._buy_episode_mu:  List[torch.Tensor] = []
+        self._buy_episode_raw: List[torch.Tensor] = []
+        self._buy_episode_rewards: List[float]    = []
+
+        self._last_was_seller: bool = False
+        self._last_was_buyer:  bool = False
 
         # Eğitim modu: True=noise var, False=deterministik (değerlendirme)
         self.training_mode: bool = True
@@ -216,7 +227,7 @@ class REINFORCEAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def _encode_state(self, obs: Observation) -> torch.Tensor:
-        """Anlık gözlemi 5-boyutlu normalize tensora çevirir."""
+        """Satıcı: 5-boyutlu normalize state — surplus ekseninde."""
         hour_norm   = obs.hour / 47.0
         surplus     = max(0.0, -obs.inflexible_load)
         supply_norm = min(surplus / 10.0, 1.0)
@@ -225,6 +236,19 @@ class REINFORCEAgent(EnergyAgent):
         avg_price_n = min(obs.last_avg_price / 0.5, 1.0)
         return torch.tensor(
             [hour_norm, supply_norm, best_bid_n, best_ask_n, avg_price_n],
+            dtype=torch.float32,
+        )
+
+    def _encode_buyer_state(self, obs: Observation) -> torch.Tensor:
+        """Alıcı: 5-boyutlu normalize state — deficit ekseninde."""
+        hour_norm    = obs.hour / 47.0
+        deficit      = max(0.0, obs.inflexible_load)
+        deficit_norm = min(deficit / 10.0, 1.0)
+        best_bid_n   = min(obs.best_bid / 0.5, 1.0)
+        best_ask_n   = min(obs.best_ask / 0.5, 1.0)
+        avg_price_n  = min(obs.last_avg_price / 0.5, 1.0)
+        return torch.tensor(
+            [hour_norm, deficit_norm, best_bid_n, best_ask_n, avg_price_n],
             dtype=torch.float32,
         )
 
@@ -282,12 +306,31 @@ class REINFORCEAgent(EnergyAgent):
                 is_emergency=False,
             )
 
-        elif net > 0.01:  # ── ALICI: MB eğrisi (öğrenme yok) ───────────
+        elif net > 0.01:  # ── ALICI: buy_policy_net ile öğrenen fiyat ──
             self._last_was_seller = False
-            bid_price = self.compute_mb(net, hour=obs.hour)
+            self._last_was_buyer  = True
+            state      = self._encode_buyer_state(obs)
+            price_hist = self._price_hist_tensor()
+
+            a_base = self.buy_policy_net(state, price_hist)
+
+            if self.training_mode:
+                noise   = torch.randn_like(a_base) * self.sigma
+                a_raw   = a_base + noise
+                a_acted = a_raw.clamp(0.0, 1.0)
+            else:
+                a_raw   = a_base
+                a_acted = a_base.clamp(0.0, 1.0)
+
+            self._buy_episode_mu.append(a_base)
+            self._buy_episode_raw.append(a_raw.detach())
+
+            bid_price = self.fit_price + float(a_acted.detach()) * (self.tou_price - self.fit_price)
+            bid_price = float(np.clip(bid_price, 0.001, 2.0))
+
             order = Order(
                 agent_id=self.agent_id,
-                price=float(np.clip(bid_price, 0.001, 2.0)),
+                price=bid_price,
                 quantity=net,
                 is_buy=True,
                 is_emergency=False,
@@ -295,6 +338,7 @@ class REINFORCEAgent(EnergyAgent):
 
         else:
             self._last_was_seller = False
+            self._last_was_buyer  = False
             order = None
 
         return Action(order=order)
@@ -304,61 +348,69 @@ class REINFORCEAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def store_reward(self, reward: float):
-        """Satıcı adımından gelen reward'ı buffer'a ekle.
+        """Rol bazlı reward dağıtımı.
 
-        _last_was_seller=False olan adımlarda (alıcı/nötr) hiçbir şey yapmaz.
-        Bu sayede _episode_mu, _episode_raw, _episode_rewards daima hizalı kalır.
+        Satıcı adımı → satıcı buffer'ına (_episode_rewards)
+        Alıcı adımı  → alıcı buffer'ına  (_buy_episode_rewards)
+        Her iki buffer da update_policy()'de ayrı ayrı işlenir.
         """
         if self._last_was_seller:
             self._episode_rewards.append(reward)
+            self._episode_reward_acc += reward
+        elif self._last_was_buyer:
+            self._buy_episode_rewards.append(reward)
             self._episode_reward_acc += reward
 
     # ------------------------------------------------------------------
     # Policy update
     # ------------------------------------------------------------------
 
-    def update_policy(self):
-        """Episode sonu gradient güncellemesi — Proper REINFORCE (log_prob).
-
-        1. G_t = Σ_{k=t}^{T} γ^k × r_k    (indirimli getiri)
-        2. Normalize: G_t ← (G_t - mean) / std
-        3. dist = Normal(μ_t, σ)
-           log_prob_t = log π(a_raw_t | s_t)
-           ∂log_prob/∂μ = (a_raw - μ) / σ²   ← gradient sadece μ'dan geçer
-        4. loss = −mean(G_t × log_prob_t)
-        5. loss.backward() + clip + step
-        """
-        n = min(len(self._episode_mu), len(self._episode_rewards))
+    def _reinforce_update(
+        self,
+        mu_list:  List[torch.Tensor],
+        raw_list: List[torch.Tensor],
+        rewards:  List[float],
+        net:      nn.Module,
+        optimizer: optim.Optimizer,
+    ):
+        """Tek bir REINFORCE güncelleme adımı — satıcı ve alıcı paylaşır."""
+        n = min(len(mu_list), len(rewards))
         if n == 0:
             return
 
-        # ── Adım 1: İndirimli getiriler ──────────────────────────────
-        rewards = self._episode_rewards[:n]
-        returns, G = [], 0.0
-        for r in reversed(rewards):
+        G_list, G = [], 0.0
+        for r in reversed(rewards[:n]):
             G = r + self.gamma * G
-            returns.insert(0, G)
-        returns_t = torch.tensor(returns, dtype=torch.float32)
+            G_list.insert(0, G)
+        returns_t = torch.tensor(G_list, dtype=torch.float32)
 
-        # ── Adım 2: Normalize ─────────────────────────────────────────
         if n > 1:
             std = returns_t.std()
             if std > 1e-8:
                 returns_t = (returns_t - returns_t.mean()) / (std + 1e-8)
 
-        # ── Adım 3 & 4: Proper REINFORCE loss ────────────────────────
-        mu_stack  = torch.cat(self._episode_mu[:n])    # [n], grad var
-        raw_stack = torch.cat(self._episode_raw[:n])   # [n], grad yok
+        mu_stack  = torch.cat(mu_list[:n])
+        raw_stack = torch.cat(raw_list[:n])
 
         dist      = torch.distributions.Normal(mu_stack, self.sigma)
         log_probs = dist.log_prob(raw_stack)
         loss      = -(returns_t * log_probs).mean()
 
-        # ── Adım 5: Gradient ──────────────────────────────────────────
-        self.optimizer.zero_grad()
+        optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
-        self.optimizer.step()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=1.0)
+        optimizer.step()
+
+    def update_policy(self):
+        """Episode sonu gradient güncellemesi — satıcı ve alıcı için ayrı ayrı."""
+        self._reinforce_update(
+            self._episode_mu, self._episode_raw, self._episode_rewards,
+            self.policy_net, self.optimizer,
+        )
+        self._reinforce_update(
+            self._buy_episode_mu, self._buy_episode_raw, self._buy_episode_rewards,
+            self.buy_policy_net, self.buy_optimizer,
+        )
 
     # ------------------------------------------------------------------
     # Episode lifecycle
@@ -378,11 +430,18 @@ class REINFORCEAgent(EnergyAgent):
         # Sigma decay: keşiften sömürüye (ε-decay ile aynı mantık)
         self.sigma = max(self.sigma_min, self.sigma * self.sigma_decay)
 
-        # Episode buffer temizle (computation graph serbest bırakılır)
+        # Satıcı buffer temizle
         self._episode_mu      = []
         self._episode_raw     = []
         self._episode_rewards = []
+
+        # Alıcı buffer temizle
+        self._buy_episode_mu      = []
+        self._buy_episode_raw     = []
+        self._buy_episode_rewards = []
+
         self._last_was_seller = False
+        self._last_was_buyer  = False
 
     # ------------------------------------------------------------------
     # Diagnostics

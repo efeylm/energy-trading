@@ -472,9 +472,13 @@ if __name__ == "__main__":
         "--curtail-rate", type=float, default=-0.03,
         help="Satılamayan enerji ödül oranı (varsayılan: -0.03)",
     )
+    parser.add_argument(
+        "--log_name", type=str, default="simulation_results.log",
+        help="Log dosyası adı (varsayılan: simulation_results.log)",
+    )
     args = parser.parse_args()
 
-    log_path = os.path.join(args.save_dir, "simulation_results.log")
+    log_path = os.path.join(args.save_dir, args.log_name)
 
     with open(log_path, "w", encoding="utf-8") as sf:
 

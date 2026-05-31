@@ -100,11 +100,18 @@ class REINFORCEEnv(EnergyTradingEnv):
                 existing.curtailed_energy = 0.0
                 existing.hourly_log       = []
 
-                # Episode buffer'ı temizle (önceki episode artığı kalmasın)
+                # Satıcı buffer'ı temizle
                 existing._episode_mu      = []
                 existing._episode_raw     = []
                 existing._episode_rewards = []
+
+                # Alıcı buffer'ı temizle
+                existing._buy_episode_mu      = []
+                existing._buy_episode_raw     = []
+                existing._buy_episode_rewards = []
+
                 existing._last_was_seller = False
+                existing._last_was_buyer  = False
 
                 new_agents.append(existing)
 
