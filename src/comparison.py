@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 import numpy as np
+import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -39,67 +41,24 @@ def _safe_avg(arr: np.ndarray) -> float:
     return float(np.mean(valid)) if len(valid) > 0 else 0.0
 
 
-def _print_comparison(bl_metrics: MetricsCollector, ql_metrics: MetricsCollector, file=None):
-    """Konsola yan yana karşılaştırma tablosu yazdır."""
-    bl_cost   = sum(bl_metrics.agent_total_cost.values())
-    ql_cost   = sum(ql_metrics.agent_total_cost.values())
-    bl_trade  = bl_metrics.total_internal_trading()
-    ql_trade  = ql_metrics.total_internal_trading()
-    bl_unmet  = bl_metrics.total_unmet_demand()
-    ql_unmet  = ql_metrics.total_unmet_demand()
-    bl_curt   = bl_metrics.total_curtailment()
-    ql_curt   = ql_metrics.total_curtailment()
-    bl_price  = bl_metrics.average_clearing_price()
-    ql_price  = ql_metrics.average_clearing_price()
+def seed_everything(seed: int) -> None:
+    """Tüm GLOBAL rastgelelik kaynaklarını sabitler — tekrarlanabilirlik için.
 
-    # System Reward Hesaplama (Rapor için kritik başarı metriği)
-    bl_reward = - (bl_unmet * 5.0 + bl_curt * 2.0) 
-    ql_reward = - (ql_unmet * 5.0 + ql_curt * 2.0)
+    Profiller ve ajan parametre varyasyonu zaten seed'li `np.random.default_rng`
+    kullanıyordu; Baseline bu yüzden her çalıştırmada birebir aynı çıkıyordu.
+    Ancak öğrenen ajanlar seed'lenmemiş GLOBAL RNG'lere bağlıydı:
 
-    # Agent 0-3 üretici olduğu için onların negatif maliyetlerini topluyoruz
-    bl_seller_rev = sum(-bl_metrics.agent_total_cost[i] for i in range(4))
-    ql_seller_rev = sum(-ql_metrics.agent_total_cost[i] for i in range(4))
+        ql_agent.py       : np.random.random() / np.random.randint()  → ε-greedy keşif
+        reinforce_agent.py: torch.randn_like()                        → Gauss gürültüsü
+        PolicyNet         : torch varsayılan ağırlık başlangıcı
 
-    def _pct(a, b):
-        """(a - b) / |b| * 100, None if b == 0."""
-        if abs(b) < 1e-9:
-            return "N/A"
-        return f"{(a - b) / abs(b) * 100:+.1f}%"
+    Bu yüzden aynı komut aynı kodla farklı QL/NN sonuçları veriyordu (ör. QL satıcı
+    geliri bir çalıştırmada +%19.4, diğerinde −%9.1). Burada hepsi sabitleniyor.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
-    width = 54
-    sep   = "-" * width
-
-    def _w(line: str = ""):
-        """Hem terminale hem özet dosyasına yaz."""
-        print(line)
-        if file is not None:
-            file.write(line + "\n")
-
-    rows = [
-        ("Sistem Basari Skoru (Rew)", f"{bl_reward:>10.2f}", f"{ql_reward:>10.2f}", _pct(ql_reward, bl_reward)),
-        ("Toplam Satici Geliri ($)",   f"{bl_seller_rev:>10.2f}", f"{ql_seller_rev:>10.2f}", _pct(ql_seller_rev, bl_seller_rev)),
-        ("Net Transfer Dengesi ($)",  f"{bl_cost:>10.4f}", f"{ql_cost:>10.4f}", "OK"),
-        ("Toplam Ticaret (kWh)",      f"{bl_trade:>10.2f}", f"{ql_trade:>10.2f}", _pct(ql_trade, bl_trade)),
-        ("Karsilanmayan (kWh)",       f"{bl_unmet:>10.2f}", f"{ql_unmet:>10.2f}", _pct(ql_unmet, bl_unmet)),
-        ("Kisitlama (kWh)",           f"{bl_curt:>10.2f}", f"{ql_curt:>10.2f}", _pct(ql_curt, bl_curt)),
-        ("Ort. Takas Fiyati ($/kWh)", f"{bl_price:>10.4f}", f"{ql_price:>10.4f}", _pct(ql_price, bl_price)),
-    ]
-
-    _w()
-    _w("+" + "-" * width + "+")
-    _w(f"|{'  KARSILASTIRMA: Q-LEARNING vs BASELINE':^{width}}|")
-    _w("+" + "-" * width + "+")
-    _w(f"|  {'Metrik':<26} {'Baseline':>10} {'Q-Learn':>10}  |")
-    _w(f"|  {sep}  |")
-    for label, bv, qv, delta in rows:
-        _w(f"|  {label:<26} {bv} {qv}  [{delta}]  |")
-    _w("+" + "-" * width + "+")
-    _w()
-
-
-# ---------------------------------------------------------------------------
-# Plots
-# ---------------------------------------------------------------------------
 
 def _print_comparison_3way(
     bl_metrics: MetricsCollector,
@@ -445,6 +404,9 @@ def run_comparison(
         if summary_file is not None:
             summary_file.write(line + "\n")
 
+    # Tüm global RNG'leri sabitle: aynı seed → aynı sonuç.
+    seed_everything(config.seed)
+
     # ── 1. Baseline ──────────────────────────────────────────────────
     if verbose:
         print("\n" + "=" * 60)
@@ -527,6 +489,8 @@ if __name__ == "__main__":
                         help="REINFORCE-NN eğitim episode sayısı (varsayılan: 800)")
     parser.add_argument("--save_dir", type=str, default=".",
                         help="Grafik ve log dosyalarının kaydedileceği dizin")
+    parser.add_argument("--seed", type=int, default=1,
+                        help="Rastgelelik tohumu — aynı seed aynı sonucu verir (varsayılan: 1)")
     parser.add_argument(
         "--lambdas", type=float, nargs="+", default=_DEFAULT_LAMBDAS,
         help="Lambda_UILI sweep değerleri (varsayılan: 0.15)",
@@ -545,6 +509,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    os.makedirs(args.save_dir, exist_ok=True)
     log_path = os.path.join(args.save_dir, args.log_name)
 
     with open(log_path, "w", encoding="utf-8") as sf:
@@ -556,7 +521,7 @@ if __name__ == "__main__":
             f"{'P2P ENERGY TRADING — OVERALL COMPARISON (Buyer+Seller Learning)':^84}\n"
             f"  Tarih : {ts}\n"
             f"  QL Episodes : {args.episodes}  |  NN Episodes : {args.nn_episodes}\n"
-            f"  beta={args.beta:.2f}  |  curtail_rate={args.curtail_rate:.2f}\n"
+            f"  beta={args.beta:.2f}  |  curtail_rate={args.curtail_rate:.2f}  |  seed={args.seed}\n"
             f"  Modeller: Baseline | QL(Alici+Satici) | NN(Alici+Satici)\n"
             f"{'='*84}\n"
         )
@@ -577,6 +542,7 @@ if __name__ == "__main__":
             os.makedirs(lam_dir, exist_ok=True)
 
             cfg = SimConfig(
+                seed=args.seed,
                 lambda_uili=lam,
                 reward_beta=args.beta,
                 reward_curtail_rate=args.curtail_rate,

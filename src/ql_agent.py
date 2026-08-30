@@ -1,21 +1,22 @@
 """
 Tabular Q-Learning Agent for P2P Energy Trading — Faz 2.
 
-Hocanın Faz 2 spesifikasyonuna göre:
+Makale Bölüm 3.7 (Multi-Agent Tabular Q-Learning) uyarınca:
 
 State  : (saat_bucket, pv_bucket)
          - saat_bucket : 3 ToU dönemi (gece/gün/akşam-tepe)
          - pv_bucket   : 4 PV üretim seviyesi (hiç / az / orta / yüksek)
          → 3 × 4 = 12 ayrık durum
 
-Action : FiT ile ToU arasında 7 ayrık fiyat seviyesi
-         price = FiT + a_idx / (N_ACTIONS-1) * (ToU - FiT)
+Action : FiT ile ToU arasında K = 15 ayrık fiyat seviyesi (makale Eq. 7)
+         price = FiT + i / (K - 1) * (ToU - FiT),   i ∈ {0..K-1}
 
 Reward : matched_qty × clearing_price + unmatched_qty × FiT
          (Satıcı için: sattığı kWh × anlık fiyat + satamadığı kWh × taban FiT)
 
-Update : Q(s,a) ← Q(s,a) + α [r + γ·max Q(s',·) − Q(s,a)]
-         Sadece satıcı konumundayken (net_load < 0) öğrenilir.
+Update : Q(s,a) ← Q(s,a) + α [r + γ·max Q(s',·) − Q(s,a)]   (makale Eq. 11)
+         Hem satıcı hem alıcı rolü öğrenir; her rolün AYRI bir Q-tablosu vardır
+         (makale Bölüm 3.7: "each role is represented by a compact state").
 
 Bu modül yalnızca Q-Learning mantığını içerir.
 Baseline karşılaştırması için baseline_agent.py dosyasına bakınız.
@@ -102,12 +103,13 @@ class QLearningAgent(EnergyAgent):
     """
     Tabular Q-Learning enerji ticareti ajansı — Faz 2.
 
-    State  : (saat_bucket, pv_bucket) — 3 × 4 = 12 durum
-    Action : FiT–ToU arasında 7 fiyat seviyesi
-    Reward : matched_qty × clearing_price + unmatched_qty × FiT
+    State  : satıcı (saat_bucket, pv_bucket), alıcı (saat_bucket, demand_bucket)
+             her rol için 3 × 4 = 12 durum
+    Action : FiT–ToU arasında K = 15 fiyat seviyesi (makale Eq. 7)
+    Reward : satıcı → Eq. (9),  alıcı → Eq. (10)
 
-    Sadece satıcı konumundayken (net_load < 0) Q-tablosu güncellenir.
-    Alıcı konumundayken (net_load > 0) heuristic MB fiyatı kullanılır.
+    Her iki rol de öğrenir: q_table (satıcı) ve buy_q_table (alıcı) ayrı ayrı
+    güncellenir. Rol, her adımda net enerji pozisyonuna göre belirlenir (Eq. 1).
     """
 
     def __init__(
@@ -121,7 +123,7 @@ class QLearningAgent(EnergyAgent):
         gamma: float = 0.95,
         epsilon: float = 1.0,
         epsilon_min: float = 0.05,
-        epsilon_decay: float = 0.97,
+        epsilon_decay: float = 0.985,   # makale Tablo 1
     ):
         super().__init__(agent_id, agent_type, mb_params, mc_params, config)
 

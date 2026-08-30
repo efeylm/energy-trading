@@ -37,7 +37,13 @@ class SimConfig:
     t_hours: int = 48           # Simulation day length (steps)
     delta_t: float = 0.5        # Time step (hours)
     
-    # --- MB/MC parameters per agent (overridable) ---
+    # --- MB/MC parameters per agent (yalnızca YEDEK değerler) ---
+    # DİKKAT: Bunlar sadece Ausgrid JSON'u (src/data/mb_agent_*.json) bulunamadığında
+    # devreye giren yedeklerdir. Normal çalışmada alıcı MB eğrisi
+    # EnergyAgent._rebuild_mb_curves() tarafından aşağıdaki tou_price / fit_price
+    # ve Ausgrid Q_max'inden türetilir.
+    # MC (Marginal Cost) parametreleri şu an fiyatlamada KULLANILMIYOR: satıcı
+    # fiyatı Use-It-or-Lose-It eğrisiyle (compute_uili_price) belirleniyor.
     # Producer MB params (when buying)
     producer_mb: AgentMBParams = field(default_factory=lambda: AgentMBParams(
         alpha=0.18, beta=0.25
@@ -55,27 +61,33 @@ class SimConfig:
         gamma=0.025, delta=0.06
     ))
     
-    # --- Iterative Double Auction parameters ---
-    initial_shout_margin: float = 0.15   # Buyers start at MB*(1-margin), sellers at MC*(1+margin)
-    alpha: float = 0.5                   # Offer convergence speed per round
-    max_auction_rounds: int = 50         # Maximum bidding rounds per hour
+    # --- Market parameters ---
+    # Baseline alıcının talebi kaç kWh'lik ünitelere bölünüp ayrı ayrı
+    # fiyatlanacağını belirler (MB eğrisi ünite başına değerlendirilir).
     unit_size: float = 0.5              # kWh per discrete tradeable unit
+
+    # NOT: Buradaki initial_shout_margin / alpha / max_auction_rounds ve
+    # seller_flat_* / buyer_flat_prob alanları kaldırıldı. İlk üçü artık silinmiş
+    # olan IterativeDoubleAuction'a, diğerleri de environment.py'de hiçbir zaman
+    # etkisi olmayan (hesaplanıp atılan) flat-block bloğuna aitti.
 
     # --- Random seed for reproducibility ---
     seed: int = 1
 
-    # --- Seller flat-block pricing (randomness) ---
-    seller_flat_prob: float = 0.5        
-    seller_flat_min_units: int = 2       
-    seller_flat_max_units: int = 5       
-
-    # --- Buyer flat-block pricing (randomness) ---
-    buyer_flat_prob: float = 0.0         
-
     # --- Data Paths ---
     mb_data_path: str = "src/data/mb_hourly_params.json"
 
-    # --- Faz 2: Tariff reference prices for Q-Learning reward ---
+    # =====================================================================
+    # TARİFELER — TÜM PROJENİN TEK KAYNAĞI (single source of truth)
+    # =====================================================================
+    # Bu iki değer projede fiyatla ilgili HER ŞEYİ belirler:
+    #   * QL aksiyon uzayı        : FiT ile ToU arasında 15 ayrık seviye  (Eq. 7)
+    #   * NN aksiyon dönüşümü     : p = FiT + a·(ToU − FiT)               (Eq. 8)
+    #   * UILI satıcı eğrisi      : P(q) = FiT + (ToU − FiT)·e^(−κq)      (Eq. 4)
+    #   * Alıcı MB eğrisi         : alpha = ToU, q=Q_max'ta FiT'e iner    (Eq. 3)
+    #   * Grid fallback           : alıcı ToU'dan alır, satıcı FiT'ten satar
+    #   * src/extract_mb.py       : MB parametre çıkarımının tavan/tabanı
+    # Hiçbir yerde hard-coded tarife bırakmayın; buradan okuyun.
     # FiT (Feed-in Tariff): minimum guaranteed price for exported energy ($/kWh)
     # Sellers receive this even if unmatched in the P2P market.
     fit_price: float = 0.06   # ~6 cent/kWh (typical AU/EU FiT)
@@ -97,6 +109,10 @@ class SimConfig:
     reward_beta: float = 0.3
 
     # --- Reward shaping: kısıtlanan enerji için ödül oranı ---
+    # DİKKAT: Bu parametre YALNIZCA grid_fallback=False iken etkilidir.
+    # grid_fallback=True (varsayılan) olduğunda eşleşmeyen enerji şebekeye
+    # FiT'ten satılır, kısıtlama (curtailment) oluşmaz ve bu oran hiç kullanılmaz.
+    # Dolayısıyla varsayılan kurulumda `--curtail-rate` argümanının etkisi yoktur.
     # Eski davranış : curtailed × FiT  (+$0.06/kWh — "ne olursa şebekeye sat")
     # Yeni varsayılan: curtailed × 0.0  (satamadıysan hiç kazanma → sat!)
     # Negatif değer : curtailed × (-x) → aktif ceza

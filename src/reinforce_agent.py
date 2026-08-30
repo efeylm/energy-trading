@@ -2,23 +2,33 @@
 REINFORCE (Policy Gradient) Agent — Faz 3.
 
 Mimari:
-  State  : 5 boyutlu anlık gözlem
-           [hour_norm, supply_norm, best_bid_n, best_ask_n, avg_price_n]
+  State  : 3 boyutlu anlık gözlem  (makale Tablo 2)
+           Satıcı : [hour_norm, supply_norm,  avg_price_n]
+           Alıcı  : [hour_norm, deficit_norm, avg_price_n]
+
+           NOT: Daha önce state 5 boyutluydu ve best_bid_n / best_ask_n
+           alanlarını da içeriyordu. PartialMatchDoubleAuction emir defterini
+           her periyot sonunda boşalttığı için bu iki değer ajan gözleminde
+           HER ZAMAN 0.0 geliyordu → ağa hiçbir bilgi taşımıyorlardı.
+           Kaldırıldılar; state boyutu 3'e indi (girdi 3 + 16 = 19).
 
   History: Son K takas fiyatı — sıralı zaman serisi
            [p_{t-K}, p_{t-K+1}, ..., p_{t-1}]   (en eskiden en yeniye)
 
   Network: PolicyNet
            ├── TimeSeriesEncoder(history) → d_model boyutlu özet
-           └── concat(state, ts_özet)    → 64 → 64 → 1 (Sigmoid) → a ∈ [0,1]
+           └── concat(state, ts_özet)    → 19 → 64 → 64 → 1 (Sigmoid) → a ∈ [0,1]
 
   Action : price = FiT + a × (ToU − FiT)   — tamamen sürekli
 
   Neden Time Series + Positional Embedding?
     Fiyat geçmişi sıralı bir seri. [2, 7, 4] ile [4, 7, 2] farklı anlam taşır.
-    Sırayı korumak için her fiyat değerine pozisyon bilgisi eklenir:
-        h_i = price_embedding(p_i) + pos_embedding(i)
+    Sırayı korumak için her fiyat değerine pozisyon bilgisi eklenir ve
+    ortalama alınmadan ÖNCE doğrusal olmayan aktivasyondan geçirilir:
+        h_i = tanh( price_embedding(p_i) + pos_embedding(i) )
     Bu Transformer'daki token + positional embedding'in ta kendisi.
+    (tanh olmadan mean pooling seriyi tek bir ortalamaya çökertiyordu —
+     bkz. TimeSeriesEncoder docstring'i.)
     Ağ böylece "dün gece düşük, sabah yüksek, şimdi düşüyor" gibi kalıpları öğrenir.
 
   Update : Proper REINFORCE (log_prob):
@@ -50,11 +60,28 @@ class TimeSeriesEncoder(nn.Module):
     """K uzunluğundaki fiyat serisini sabit boyutlu vektöre dönüştürür.
 
     Her adım:
-        h_i = price_proj(p_i) + pos_embedding(i)
-              ─────────────────────────────────
-              değer bilgisi + sıra bilgisi  ← ikisini TOPLA (Transformer gibi)
+        h_i = tanh( price_proj(p_i) + pos_embedding(i) )
+              ──── ─────────────────────────────────────
+               ↑          değer bilgisi + sıra bilgisi  ← toplanır (Transformer gibi)
+               └── DOĞRUSAL OLMAYAN AKTİVASYON — ortalamadan ÖNCE uygulanmalı
 
     Çıktı: mean(h_0, ..., h_{K-1})  →  d_model boyutlu özet vektör
+
+    Neden tanh şart?
+        Aktivasyon olmadan price_proj doğrusal olduğu için mean pooling şuna çöküyordu:
+
+            mean_i( p_i·W + b + pos_i ) = mean(p)·W + b + mean(pos)
+                                                          └── sabit, fiyattan bağımsız
+
+        Yani encoder yalnızca son K fiyatın ORTALAMASINI görüyordu: sıra bilgisi de,
+        tek tek değerler de kayboluyordu. [2, 7, 4] ile [4, 7, 2] — hatta aynı
+        ortalamaya sahip düz bir seri — birebir aynı çıktıyı veriyordu; pozisyon
+        embedding'i hiçbir işe yaramıyordu.
+
+        tanh ortalamadan ÖNCE uygulandığında her adımın katkısı kendi fiyatına VE
+        kendi pozisyonuna birlikte bağlı olur, sıra değişince ortalama da değişir.
+        Makalenin vaat ettiği "temporal awareness" ancak böyle gerçekleşir.
+        (Tespit: Kamil Hoca, 30.08.2026)
 
     Neden concat değil toplama?
         Transformer makalesi (Vaswani et al. 2017) de böyle yapıyor.
@@ -84,8 +111,8 @@ class TimeSeriesEncoder(nn.Module):
         positions = torch.arange(self.seq_len, dtype=torch.long)
         pos_emb   = self.pos_embedding(positions)            # [K, d_model]
 
-        h = price_emb + pos_emb   # [K, d_model] — sıra bilgisi korunuyor
-        return h.mean(dim=0)      # [d_model]    — mean pooling
+        h = torch.tanh(price_emb + pos_emb)   # [K, d_model] — sıra bilgisi korunur
+        return h.mean(dim=0)                  # [d_model]    — mean pooling
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +124,7 @@ class PolicyNet(nn.Module):
 
     Mimari:
         TimeSeriesEncoder(history [K])       → ts_emb [d_model]
-        concat(state [state_dim], ts_emb)    → [state_dim + d_model]
+        concat(state [state_dim], ts_emb)    → [state_dim + d_model] = 3 + 16 = 19
         Linear → ReLU → Linear → ReLU → Linear → Sigmoid  →  a ∈ [0,1]
 
     W = θ: tüm parametreler (hocanın Theta Weight ifadesi).
@@ -105,14 +132,14 @@ class PolicyNet(nn.Module):
 
     def __init__(
         self,
-        state_dim: int = 5,
+        state_dim: int = 3,
         seq_len:   int = 12,
         d_model:   int = 16,
         hidden:    int = 64,
     ):
         super().__init__()
         self.ts_encoder  = TimeSeriesEncoder(seq_len=seq_len, d_model=d_model)
-        combined_dim     = state_dim + d_model   # 5 + 16 = 21
+        combined_dim     = state_dim + d_model   # 3 + 16 = 19
 
         self.policy_head = nn.Sequential(
             nn.Linear(combined_dim, hidden),
@@ -148,7 +175,7 @@ class REINFORCEAgent(EnergyAgent):
         decide_action() → history güncelle → PolicyNet(state, history) → aksiyon
 
     Yeni metodlar:
-        _encode_state()   → 5-boyutlu anlık state tensoru
+        _encode_state()   → 3-boyutlu anlık state tensoru
         _price_hist_tensor() → normalize edilmiş geçmiş fiyat tensoru
         store_reward()    → episode buffer'a reward ekle
         update_policy()   → proper REINFORCE log_prob loss → backward
@@ -192,13 +219,13 @@ class REINFORCEAgent(EnergyAgent):
 
         # Satıcı politika ağı ve optimizer
         self.policy_net = PolicyNet(
-            state_dim=5, seq_len=seq_len, d_model=d_model, hidden=hidden
+            state_dim=3, seq_len=seq_len, d_model=d_model, hidden=hidden
         )
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
         # Alıcı politika ağı ve optimizer (satıcıyla simetrik, ayrı ağırlıklar)
         self.buy_policy_net = PolicyNet(
-            state_dim=5, seq_len=seq_len, d_model=d_model, hidden=hidden
+            state_dim=3, seq_len=seq_len, d_model=d_model, hidden=hidden
         )
         self.buy_optimizer = optim.Adam(self.buy_policy_net.parameters(), lr=lr)
 
@@ -227,28 +254,24 @@ class REINFORCEAgent(EnergyAgent):
     # ------------------------------------------------------------------
 
     def _encode_state(self, obs: Observation) -> torch.Tensor:
-        """Satıcı: 5-boyutlu normalize state — surplus ekseninde."""
+        """Satıcı: 3-boyutlu normalize state — [hour, surplus, avg_price]."""
         hour_norm   = obs.hour / 47.0
         surplus     = max(0.0, -obs.inflexible_load)
         supply_norm = min(surplus / 10.0, 1.0)
-        best_bid_n  = min(obs.best_bid / 0.5, 1.0)
-        best_ask_n  = min(obs.best_ask / 0.5, 1.0)
         avg_price_n = min(obs.last_avg_price / 0.5, 1.0)
         return torch.tensor(
-            [hour_norm, supply_norm, best_bid_n, best_ask_n, avg_price_n],
+            [hour_norm, supply_norm, avg_price_n],
             dtype=torch.float32,
         )
 
     def _encode_buyer_state(self, obs: Observation) -> torch.Tensor:
-        """Alıcı: 5-boyutlu normalize state — deficit ekseninde."""
+        """Alıcı: 3-boyutlu normalize state — [hour, deficit, avg_price]."""
         hour_norm    = obs.hour / 47.0
         deficit      = max(0.0, obs.inflexible_load)
         deficit_norm = min(deficit / 10.0, 1.0)
-        best_bid_n   = min(obs.best_bid / 0.5, 1.0)
-        best_ask_n   = min(obs.best_ask / 0.5, 1.0)
         avg_price_n  = min(obs.last_avg_price / 0.5, 1.0)
         return torch.tensor(
-            [hour_norm, deficit_norm, best_bid_n, best_ask_n, avg_price_n],
+            [hour_norm, deficit_norm, avg_price_n],
             dtype=torch.float32,
         )
 
@@ -279,6 +302,7 @@ class REINFORCEAgent(EnergyAgent):
 
         if net < -0.01:   # ── SATICI ───────────────────────────────────
             self._last_was_seller = True
+            self._last_was_buyer  = False
             state      = self._encode_state(obs)       # [5]
             price_hist = self._price_hist_tensor()     # [seq_len]
 

@@ -35,11 +35,17 @@ def generate_pv_profile(
     agent_peak = peak_kw * (0.8 + 0.1 * (agent_id % 4))
     
     profile = _gaussian(hours, mu=peak_hour, sigma=2.5, amplitude=agent_peak)
-    profile[hours < 6] = 0.0
-    profile[hours > 19] = 0.0
-    
+
     noise = rng.normal(0, noise_std, size=48)
     profile = np.maximum(0.0, profile + noise)
+
+    # Gündüz penceresi maskesi GÜRÜLTÜDEN SONRA uygulanır.
+    # Makale Bölüm 3.9: "PV generation ... set to zero outside the interval
+    # 06:00-19:00". Maske eskiden gürültüden ÖNCE uygulanıyordu; gürültü gece
+    # saatlerini tekrar dolduruyor ve paneller 00:00-04:30 arasında üretim
+    # yapıyormuş gibi görünüyordu (ajan başına ~1 kWh/gün, günlük PV'nin %1.8'i).
+    profile[hours < 6] = 0.0
+    profile[hours > 19] = 0.0
     return profile
 
 

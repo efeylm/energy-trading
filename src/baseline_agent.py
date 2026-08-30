@@ -1,31 +1,24 @@
 """
-Kural Tabanlı Baseline Ajan — Öğrenme Yapmaz.
+Kural Tabanlı Baseline Ajan — Öğrenme Yapmaz (makale Bölüm 3.3).
 
-Karar mantığı tamamen deterministik formüllere dayanır:
+Rol, her adımda net enerji pozisyonuna göre belirlenir (Eq. 1):
+  net_load > 0 → ALICI   : fiyat = MB(q)  — üstel Marginal Benefit eğrisi, Eq. (3)
+                            ToU tavanıyla sınırlanır (grid'den pahalıya P2P alınmaz)
+  net_load < 0 → SATICI  : fiyat = P_UILI(q) — Use-It-or-Lose-It eğrisi, Eq. (4)
+                            P(q) = FiT + (ToU − FiT)·e^(−κq)
 
-  Üretim yüksek  (net_load << 0) → Satıcı, fiyatı düşür  (rekabetçi)
-  Üretim orta    (net_load ~ 0)  → Sabit referans fiyatı kullan
-  Üretim düşük   (net_load > 0)  → Alıcı, referans MB fiyatına yakın teklif ver
+MB eğrisinin alpha/beta katsayıları Ausgrid verisinden (src/data/mb_agent_*.json)
+gelir; tavan/taban ise config'deki ToU/FiT'tir (bkz. src/agent.py _rebuild_mb_curves).
+UILI'nin κ katsayısı config.lambda_uili'dir.
 
-Bu ajan Q-Learning eğitimine dahil edilmez; yalnızca
-karşılaştırma (benchmark) amacıyla kullanılır.
+Bu ajan öğrenme yapmaz; Q-Learning ve REINFORCE için kontrol grubudur.
 
-Referans Fiyat Mantığı
-----------------------
-- Baz alıcı fiyatı  : MB(q) × hour_factor
-- Baz satıcı fiyatı : MC(q) × (2 − hour_factor)
-
-hour_factor:
-  07–09 (sabah tepe)  → 1.10   (talep yüksek → alıcılar daha fazla öder)
-  10–14 (güneş doruk) → 0.85   (arz yüksek  → satıcılar daha ucuz satar)
-  17–20 (akşam tepe)  → 1.15
-  diğer              → 1.00
+NOT: Bu dosyada eskiden bir _hour_factor() yardımcısı ve buyer_margin /
+seller_margin parametreleri vardı. Hiçbiri fiyat hesabında kullanılmıyordu
+(docstring aksini söylüyordu) — kaldırıldılar.
 """
 
 from __future__ import annotations
-
-import math
-from typing import Optional
 
 import numpy as np
 
@@ -34,43 +27,8 @@ from src.agent import EnergyAgent, Observation, Action
 from src.market import Order
 
 
-# ---------------------------------------------------------------------------
-# Hour factor: fiyatı saate göre ayarlar
-# ---------------------------------------------------------------------------
-
-def _hour_factor(hour_step: int) -> float:
-    """
-    Günün yarım saatlik adımını (0–47) gerçek saate çevirir ve
-    bir fiyat çarpanı döner.
-
-    Çarpan > 1 → talep/kıtlık baskısı yüksek (alıcı daha fazla öder, satıcı daha az indirim yapar)
-    Çarpan < 1 → arz bolluğu (üreticiler rekabetçi fiyat verir)
-    """
-    real_hour = (hour_step * 0.5) % 24  # 0.0 – 23.5
-
-    if 7.0 <= real_hour < 9.5:   # Sabah tepe yükü
-        return 1.10
-    elif 10.0 <= real_hour < 15.0:  # Güneş doruk saatleri: arz fazlası
-        return 0.85
-    elif 17.0 <= real_hour < 20.5:  # Akşam tepe yükü
-        return 1.15
-    else:
-        return 1.00
-
-
 class BaselineAgent(EnergyAgent):
-    """Kural tabanlı baseline ajan.
-
-    MB/MC eğrilerini kullanır fakat herhangi bir öğrenme mekanizması içermez.
-    Fiyat, günün saatine göre deterministik olarak yukarı/aşağı ölçeklenir.
-
-    Parameters
-    ----------
-    buyer_margin  : MB fiyatının üzerine eklenen sabit marj (oran).
-                    Varsayılan 0.0 → tamamen MB fiyatından teklif verir.
-    seller_margin : MC fiyatının altına düşülen sabit marj (oran).
-                    Varsayılan 0.0 → tamamen MC fiyatından teklif verir.
-    """
+    """Kural tabanlı baseline ajan — MB (alıcı) ve UILI (satıcı) eğrileri."""
 
     def __init__(
         self,
@@ -79,12 +37,8 @@ class BaselineAgent(EnergyAgent):
         mb_params: AgentMBParams,
         mc_params: AgentMCParams,
         config: SimConfig,
-        buyer_margin: float = 0.0,
-        seller_margin: float = 0.0,
     ):
         super().__init__(agent_id, agent_type, mb_params, mc_params, config)
-        self.buyer_margin  = buyer_margin
-        self.seller_margin = seller_margin
 
     # ------------------------------------------------------------------
     # Pricing formulas
@@ -96,7 +50,7 @@ class BaselineAgent(EnergyAgent):
         Grid fallback varken rasyonel alıcı asla ToU'dan fazla ödemez:
         P2P'de ToU'dan pahalıya almak yerine grid'den alır.
         """
-        tou = getattr(self.config, "tou_price", 0.28)
+        tou = self.config.tou_price
         price = self.compute_mb(quantity, hour=hour)
         return float(np.clip(price, 0.001, tou))
 

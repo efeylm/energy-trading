@@ -27,16 +27,26 @@ from src.config import AgentMBParams, AgentMCParams, SimConfig
 from src.market import Order
 
 
+# MB eğrisi türetilirken Q_max için güvenlik tabanı (kWh).
+# src/extract_mb.py içindeki Q_MAX_FLOOR ile aynı değer olmalıdır.
+MB_Q_MAX_FLOOR = 0.1
+
+
 @dataclass
 class Observation:
     """Agent's private observation at time step t.
-    
-    o_n,t = [P^inf_n,t, λ^b_t, λ^s_t, λ^avg_t, hour]
+
+    Makale Eq. (6):
+        o_n,t = [P^inf_n,t, λ^avg_t, t]
+
+    NOT: Eskiden buradaki gözlem vektörü best_bid (λ^b) ve best_ask (λ^s)
+    alanlarını da içeriyordu. PartialMatchDoubleAuction her periyodun sonunda
+    emir defterlerini boşalttığı için bu iki alan ajan gözleminde HER ZAMAN
+    0.0 değerini alıyordu; yani öğrenmeye hiçbir bilgi katmıyor, buna karşılık
+    NN state boyutunu 5'e şişiriyordu. Kaldırıldılar → state boyutu 3.
     """
     inflexible_load: float     # P^inf_n,t (kW)
-    best_bid: float            # λ^b_t ($/kWh)
-    best_ask: float            # λ^s_t ($/kWh)
-    last_avg_price: float      # λ^avg_t ($/kWh)
+    last_avg_price: float      # λ^avg_t ($/kWh) — önceki periyodun takas fiyatı
     hour: int                  # t
 
 
@@ -81,23 +91,49 @@ class EnergyAgent:
         # Try agent-specific data first, then global config path
         specific_path = f"src/data/mb_agent_{agent_id}.json"
         path_to_load = specific_path if os.path.exists(specific_path) else self.config.mb_data_path
-        
+
         if os.path.exists(path_to_load):
             try:
                 with open(path_to_load, 'r') as f:
-                    self.hourly_mb_data = json.load(f)
+                    raw_mb_data = json.load(f)
+                self.hourly_mb_data = self._rebuild_mb_curves(raw_mb_data)
             except Exception as e:
                 print(f"Warning: Could not load MB data for agent {agent_id}: {e}")
 
-        # --- Iterative auction state ---
-        self._auction_role: Optional[str] = None
-        self._auction_unit_size: float = 0.5
-        self._auction_total_qty: float = 0.0
-        self._auction_units_to_trade: int = 0
-        self._auction_units_traded: int = 0
-        self._auction_current_offer: Optional[float] = None
         self._current_hour: int = 0
     
+    def _rebuild_mb_curves(self, raw_mb_data: dict) -> dict:
+        """Ausgrid JSON'undan MB eğrilerini config tarifelerine göre yeniden kurar.
+
+        Tek kaynak ilkesi: MB eğrisinin tavanı ToU, tabanı FiT'tir ve her ikisi de
+        SADECE src/config.py'den gelir. JSON dosyasında saklanan alpha/beta değerleri
+        bilgilendirme amaçlıdır; burada Ausgrid'den gelen tek gerçek veri olan
+        Q_max kullanılarak eğri baştan türetilir:
+
+            alpha = ToU                                (q = 0'da ödeme isteği tavanı)
+            beta  = -ln(FiT / ToU) / max(Q_MIN, Q_max) (q = Q_max'ta taban FiT'e iner)
+
+        Böylece config'de FiT/ToU değiştiğinde JSON'ları yeniden üretmeye gerek kalmaz.
+        Q_max bulunmayan (eski format) kayıtlarda JSON'daki alpha/beta aynen korunur.
+        """
+        tou = self.config.tou_price
+        fit = self.config.fit_price
+        beta_scale = -math.log(fit / tou)
+
+        rebuilt = {}
+        for time_key, params in raw_mb_data.items():
+            q_max = params.get("Q_max")
+            if q_max is None:
+                rebuilt[time_key] = params
+                continue
+            safe_q_max = max(MB_Q_MAX_FLOOR, float(q_max))
+            rebuilt[time_key] = {
+                "alpha": tou,
+                "beta": beta_scale / safe_q_max,
+                "Q_max": float(q_max),
+            }
+        return rebuilt
+
     def compute_mb(self, quantity: float, hour: Optional[int] = None) -> float:
         """Marginal Benefit: MB(q) = alpha * exp(-beta * q) (Exponential)"""
         q = max(0.0, quantity)
@@ -132,9 +168,12 @@ class EnergyAgent:
         aksi hâlde eşleşemeyip FiT'ten bile daha az kazanır.
         """
         q = max(0.0, quantity)
-        fit = getattr(self.config, "fit_price", 0.06)
-        tou = getattr(self.config, "tou_price", 0.28)
-        lam = getattr(self.config, "lambda_uili", 0.4)
+        # Tüm parametreler DOĞRUDAN config'den okunur.
+        # (Eskiden getattr(..., 0.4) şeklinde bir yedek varsayılan vardı; config'deki
+        #  gerçek varsayılan 0.15 olduğu için yanıltıcıydı — kaldırıldı.)
+        fit = self.config.fit_price
+        tou = self.config.tou_price
+        lam = self.config.lambda_uili
         return fit + (tou - fit) * math.exp(-lam * q)
     
     def decide_action(self, obs: Observation) -> Action:
@@ -144,16 +183,18 @@ class EnergyAgent:
         
         order = None
         if market_quantity > 0.01:
-            # BUYER - Agent needs energy
-            if self.agent_type != "producer":
-                bid_price = self.compute_mb(market_quantity, hour=self._current_hour)
-                order = Order(
-                    agent_id=self.agent_id,
-                    price=bid_price,
-                    quantity=market_quantity,
-                    is_buy=True,
-                    is_emergency=False,
-                )
+            # ALICI — makale Bölüm 3.3: rol yalnızca net enerji pozisyonuna bağlıdır
+            # (Eq. 1). Üretici de gece/akşam net açık verdiğinde alıcı olabilir;
+            # eskiden buradaki `agent_type != "producer"` kısıtı üreticinin alıcı
+            # olmasını engelliyordu ve makaleyle çelişiyordu — kaldırıldı.
+            bid_price = self.compute_mb(market_quantity, hour=self._current_hour)
+            order = Order(
+                agent_id=self.agent_id,
+                price=bid_price,
+                quantity=market_quantity,
+                is_buy=True,
+                is_emergency=False,
+            )
         elif market_quantity < -0.01:
             # SELLER - Agent has surplus → Use-It-or-Lose-It pricing
             # Fiyat üretim miktarıyla ters orantılı: çok üretim → ucuz fiyat
@@ -189,8 +230,8 @@ class EnergyAgent:
         bought_kwh  = sum(t.quantity for t in trades_as_buyer)
         sold_kwh    = sum(t.quantity for t in trades_as_seller)
 
-        fit_price = getattr(self.config, "fit_price", 0.06)
-        tou_price = getattr(self.config, "tou_price", 0.28)
+        fit_price = self.config.fit_price
+        tou_price = self.config.tou_price
 
         # Grid işlem maliyetleri
         grid_buy_cost    = grid_purchased * tou_price
@@ -217,54 +258,6 @@ class EnergyAgent:
             "grid_sell_income": grid_sell_income,
         })
     
-    # --- Iterative Auction logic (simplified) ---
-
-    def setup_auction(self, role: str, market_quantity: float, unit_size: float) -> int:
-        self._auction_role = role
-        self._auction_unit_size = unit_size
-        self._auction_total_qty = abs(market_quantity)
-        self._auction_units_to_trade = max(1, math.ceil(self._auction_total_qty / unit_size))
-        self._auction_units_traded = 0
-        self._auction_current_offer = None
-        return self._auction_units_to_trade
-
-    def auction_valuation(self) -> Optional[float]:
-        if self._auction_units_traded >= self._auction_units_to_trade:
-            return None
-        q = self._auction_units_traded * self._auction_unit_size
-        if self._auction_role == 'buyer':
-            return self.compute_mb(q, hour=self._current_hour)
-        # UILI: seller reservation price = UILI curve at cumulative qty traded so far
-        return self.compute_uili_price(q)
-
-    def auction_initial_offer(self, margin: float) -> Optional[float]:
-        v = self.auction_valuation()
-        if v is None: return None
-        if self._auction_role == 'buyer':
-            self._auction_current_offer = v * (1.0 - margin)
-        else:
-            self._auction_current_offer = v * (1.0 + margin)
-        return self._auction_current_offer
-
-    def auction_update_offer(self, best_bid: float, best_ask: float, alpha: float):
-        if self._auction_current_offer is None: return
-        v = self.auction_valuation()
-        if v is None: return
-        midpoint = (best_bid + best_ask) / 2.0
-        if self._auction_role == 'buyer':
-            new = self._auction_current_offer + alpha * (midpoint - self._auction_current_offer)
-            self._auction_current_offer = min(v, max(self._auction_current_offer, new))
-        else:
-            new = self._auction_current_offer - alpha * (self._auction_current_offer - midpoint)
-            self._auction_current_offer = max(v, min(self._auction_current_offer, new))
-
-    def auction_record_trade(self):
-        self._auction_units_traded += 1
-        self._auction_current_offer = None
-
-    def auction_units_remaining(self) -> int:
-        return max(0, self._auction_units_to_trade - self._auction_units_traded)
-
     def get_reward(self, hour: int) -> float:
         """
         Faz 2 Reward Fonksiyonu:
@@ -278,14 +271,14 @@ class EnergyAgent:
             reward = -net_cost
             - Alıcı maliyet minimize eder (negatif maliyet = iyi)
 
-        FiT değeri config'den alınır; config bağlantısı yoksa 0.06 $/kWh kullanılır.
+        FiT ve β değerleri doğrudan src/config.py'den okunur.
         """
         if not self.hourly_log:
             return 0.0
 
         last = self.hourly_log[-1]
-        fit_price = getattr(self.config, "fit_price", 0.06)
-        beta      = getattr(self.config, "reward_beta", 0.0)
+        fit_price = self.config.fit_price
+        beta      = self.config.reward_beta
 
         # Satıcı mı?
         # net_load negatif → sold_kwh > 0 veya curtailed > 0
@@ -300,13 +293,11 @@ class EnergyAgent:
         if is_seller:
             # Grid fallback varsa: eşleşemeyen enerji → grid'e FiT'ten satıldı.
             # P2P geliri > FiT geliri → ajan P2P'yi tercih etmeyi öğrenir.
-            grid_fallback = getattr(self.config, "grid_fallback", False)
-            if grid_fallback:
+            if self.config.grid_fallback:
                 # Satıcı: P2P geliri + grid FiT geliri
                 reward = sell_income + grid_sell_inc
             else:
-                curtail_rate     = getattr(self.config, "reward_curtail_rate", 0.0)
-                unmatched_reward = curtailed * curtail_rate
+                unmatched_reward = curtailed * self.config.reward_curtail_rate
                 reward           = sell_income + unmatched_reward
 
             # β fiyat primi: FiT üzerinde P2P'de satılan her kWh için ekstra ödül
