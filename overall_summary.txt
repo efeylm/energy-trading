@@ -1,0 +1,167 @@
+
+====================================================================================
+          P2P ENERGY TRADING — OVERALL COMPARISON (Buyer+Seller Learning)           
+  Tarih : 2026-08-30 23:35:00
+  QL Episodes : 3000  |  NN Episodes : 7000
+  beta=0.30  |  curtail_rate=-0.03  |  seed=1
+  Modeller: Baseline | QL(Alici+Satici) | NN(Alici+Satici)
+====================================================================================
+
+====================================================================================
+  LAMBDA_UILI = 0.15
+====================================================================================
+
+[ADIM 1/3] BASELINE SONUÇLARI
+============================================================
+       SIMULATION RESULTS SUMMARY
+============================================================
+
+  Total hours simulated:       48
+  P2P Trading:                 84.47 kWh
+  Grid Purchased (ToU):        1179.17 kWh
+  Grid Sold (FiT):             207.15 kWh
+  P2P Ratio:                   5.7%
+  Average P2P Price:           $0.2058/kWh
+
+  --- Agent Energy Bills (P2P + Grid) ---
+    Agent 0: Bill=$2.4175, P2P Buy=0.08kWh, P2P Sell=12.85kWh, Grid Buy=29.47kWh, Grid Sell=49.63kWh
+    Agent 1: Bill=$4.2384, P2P Buy=0.00kWh, P2P Sell=7.99kWh, Grid Buy=35.13kWh, Grid Sell=61.10kWh
+    Agent 2: Bill=$6.0170, P2P Buy=0.09kWh, P2P Sell=8.04kWh, Grid Buy=42.29kWh, Grid Sell=69.05kWh
+    Agent 3: Bill=$1.3331, P2P Buy=1.00kWh, P2P Sell=55.59kWh, Grid Buy=48.45kWh, Grid Sell=27.36kWh
+    Agent 4: Bill=$64.9873, P2P Buy=19.39kWh, P2P Sell=0.00kWh, Grid Buy=217.48kWh, Grid Sell=0.00kWh
+    Agent 5: Bill=$73.0294, P2P Buy=17.81kWh, P2P Sell=0.00kWh, Grid Buy=248.13kWh, Grid Sell=0.00kWh
+    Agent 6: Bill=$79.1060, P2P Buy=30.00kWh, P2P Sell=0.00kWh, Grid Buy=259.78kWh, Grid Sell=0.00kWh
+    Agent 7: Bill=$86.6102, P2P Buy=16.09kWh, P2P Sell=0.00kWh, Grid Buy=298.44kWh, Grid Sell=0.00kWh
+
+============================================================
+
+[ADIM 2/3] Q-LEARNING SONUÇLARI (3000 ep)
+============================================================
+       SIMULATION RESULTS SUMMARY
+============================================================
+
+  Total hours simulated:       48
+  P2P Trading:                 219.15 kWh
+  Grid Purchased (ToU):        1044.49 kWh
+  Grid Sold (FiT):             72.46 kWh
+  P2P Ratio:                   16.4%
+  Average P2P Price:           $0.1577/kWh
+
+  --- Agent Energy Bills (P2P + Grid) ---
+    Agent 0: Bill=$1.4800, P2P Buy=0.00kWh, P2P Sell=33.24kWh, Grid Buy=29.55kWh, Grid Sell=29.24kWh
+    Agent 1: Bill=$2.1612, P2P Buy=0.00kWh, P2P Sell=36.64kWh, Grid Buy=35.13kWh, Grid Sell=32.45kWh
+    Agent 2: Bill=$0.2605, P2P Buy=0.08kWh, P2P Sell=75.99kWh, Grid Buy=42.30kWh, Grid Sell=1.10kWh
+    Agent 3: Bill=$1.0227, P2P Buy=0.00kWh, P2P Sell=73.28kWh, Grid Buy=49.45kWh, Grid Sell=9.67kWh
+    Agent 4: Bill=$60.7470, P2P Buy=54.64kWh, P2P Sell=0.00kWh, Grid Buy=182.23kWh, Grid Sell=0.00kWh
+    Agent 5: Bill=$70.4265, P2P Buy=22.51kWh, P2P Sell=0.00kWh, Grid Buy=243.44kWh, Grid Sell=0.00kWh
+    Agent 6: Bill=$73.4558, P2P Buy=53.49kWh, P2P Sell=0.00kWh, Grid Buy=236.29kWh, Grid Sell=0.00kWh
+    Agent 7: Bill=$78.5551, P2P Buy=88.43kWh, P2P Sell=0.00kWh, Grid Buy=226.09kWh, Grid Sell=0.00kWh
+
+============================================================
+
+[ADIM 3/3] REINFORCE-NN SONUÇLARI (7000 ep)
+============================================================
+       SIMULATION RESULTS SUMMARY
+============================================================
+
+  Total hours simulated:       48
+  P2P Trading:                 245.49 kWh
+  Grid Purchased (ToU):        1018.15 kWh
+  Grid Sold (FiT):             46.12 kWh
+  P2P Ratio:                   18.7%
+  Average P2P Price:           $0.1269/kWh
+
+  --- Agent Energy Bills (P2P + Grid) ---
+    Agent 0: Bill=$2.5207, P2P Buy=0.00kWh, P2P Sell=32.58kWh, Grid Buy=29.55kWh, Grid Sell=29.90kWh
+    Agent 1: Bill=$0.5801, P2P Buy=0.00kWh, P2P Sell=69.08kWh, Grid Buy=35.13kWh, Grid Sell=0.00kWh
+    Agent 2: Bill=$2.0981, P2P Buy=0.00kWh, P2P Sell=77.09kWh, Grid Buy=42.38kWh, Grid Sell=0.00kWh
+    Agent 3: Bill=$4.6956, P2P Buy=0.00kWh, P2P Sell=66.74kWh, Grid Buy=49.45kWh, Grid Sell=16.22kWh
+    Agent 4: Bill=$60.1332, P2P Buy=37.05kWh, P2P Sell=0.00kWh, Grid Buy=199.82kWh, Grid Sell=0.00kWh
+    Agent 5: Bill=$63.0250, P2P Buy=79.33kWh, P2P Sell=0.00kWh, Grid Buy=186.62kWh, Grid Sell=0.00kWh
+    Agent 6: Bill=$72.3364, P2P Buy=56.36kWh, P2P Sell=0.00kWh, Grid Buy=233.42kWh, Grid Sell=0.00kWh
+    Agent 7: Bill=$76.9243, P2P Buy=72.76kWh, P2P Sell=0.00kWh, Grid Buy=241.77kWh, Grid Sell=0.00kWh
+
+============================================================
+
++==================================================================================+
+|        3-YOL KARSILASTIRMA: Baseline | QL(Alici+Satici) | NN(Alici+Satici)       |
++==================================================================================+
+|  Metrik                       Baseline    QL(B+S)    NN(B+S)      ΔQL      ΔNN  |
+|  ------------------------------------------------------------------------------  |
+|  P2P Orani (%)                     5.7       16.4       18.7  +185.6%  +226.4%  |
+|  P2P Ticaret (kWh)               84.47     219.15     245.49  +159.5%  +190.6%  |
+|  Grid Alim/ToU (kWh)           1179.17    1044.49    1018.15   -11.4%   -13.7%  |
+|  Grid Satim/FiT (kWh)           207.15      72.46      46.12   -65.0%   -77.7%  |
+|  Ort. P2P Fiyati ($/kWh)        0.2058     0.1577     0.1269   -23.4%   -38.3%  |
++==================================================================================+
+  (ΔQL, ΔNN = Baseline'a göre değişim yüzdesi)
+
++==================================================================================+
+|                       SATICI GELİRİ & ALICI MALİYET ANALİZİ                      |
++==================================================================================+
+|  Kalem                            Baseline    QL(B+S)    NN(B+S)      ΔQL      ΔNN  |
+|  ------------------------------------------------------------------------------  |
+|  SATICI: P2P Geliri ($)              17.38      34.55      31.16   +98.8%   +79.3%  |
+|  SATICI: Grid FiT Geliri ($)         12.43       4.35       2.77   -65.0%   -77.7%  |
+|  SATICI: TOPLAM GELİR ($)            29.81      38.90      33.93   +30.5%   +13.8%  |
+|  ALICI: P2P Alim Maliyeti ($)        17.06      34.53      31.16  +102.4%   +82.7%  |
+|  ALICI: Grid ToU Maliyeti ($)       286.67     248.66     241.26   -13.3%   -15.8%  |
+|  ALICI: TOPLAM MALİYET ($)          303.73     283.18     272.42    -6.8%   -10.3%  |
++==================================================================================+
+  * P2P sıfır toplamlıdır: satıcı P2P geliri = alıcı P2P maliyeti
+  * Toplam alıcı maliyeti düşüyorsa sistem alıcıya fayda sağlıyor demektir.
+
+
+[BASELINE] WELFARE ANALIZI
+============================================================
+  SATICI GELİRİ & ALICI MALİYET ANALİZİ
+============================================================
+
+  --- Satıcı Geliri (Producer agents 0-3) ---
+  P2P Geliri:           $   17.3791
+  Grid FiT Geliri:      $   12.4288
+  TOPLAM SATICI GELİRİ: $   29.8079
+
+  --- Alıcı Maliyeti (Consumer agents 4-7) ---
+  P2P Alım Maliyeti:    $   17.0611
+  Grid ToU Maliyeti:    $  286.6719
+  TOPLAM ALICI MALİYETİ:$  303.7330
+
+  P2P Zero-Sum Kontrolü (P2P gelir - P2P maliyet): $0.3181
+============================================================
+
+[Q-LEARNING] WELFARE ANALIZI
+============================================================
+  SATICI GELİRİ & ALICI MALİYET ANALİZİ
+============================================================
+
+  --- Satıcı Geliri (Producer agents 0-3) ---
+  P2P Geliri:           $   34.5491
+  Grid FiT Geliri:      $    4.3478
+  TOPLAM SATICI GELİRİ: $   38.8969
+
+  --- Alıcı Maliyeti (Consumer agents 4-7) ---
+  P2P Alım Maliyeti:    $   34.5293
+  Grid ToU Maliyeti:    $  248.6551
+  TOPLAM ALICI MALİYETİ:$  283.1844
+
+  P2P Zero-Sum Kontrolü (P2P gelir - P2P maliyet): $0.0198
+============================================================
+
+[REINFORCE-NN] WELFARE ANALIZI
+============================================================
+  SATICI GELİRİ & ALICI MALİYET ANALİZİ
+============================================================
+
+  --- Satıcı Geliri (Producer agents 0-3) ---
+  P2P Geliri:           $   31.1629
+  Grid FiT Geliri:      $    2.7672
+  TOPLAM SATICI GELİRİ: $   33.9301
+
+  --- Alıcı Maliyeti (Consumer agents 4-7) ---
+  P2P Alım Maliyeti:    $   31.1629
+  Grid ToU Maliyeti:    $  241.2561
+  TOPLAM ALICI MALİYETİ:$  272.4189
+
+  P2P Zero-Sum Kontrolü (P2P gelir - P2P maliyet): $-0.0000
+============================================================
