@@ -5,8 +5,13 @@ Kullanım:
     python -m src.comparison          # Varsayılan ayarlar
     python -m src.comparison --episodes 200
 
+    python -m src.comparison --baseline mb   # Eski kural tabanlı (MB/UILI) baseline
+
 Adımlar:
-1. Baseline ajanları aynı seed ile tek bir günde çalıştır.
+1. Baseline'ı aynı seed ile çalıştır. Varsayılan (--baseline random): rastgele
+   zero-intelligence baseline, aynı gün üzerinde --baseline_draws fiyat
+   çekilişinin ortalaması (src/random_environment.py). --baseline mb: kural
+   tabanlı MB/UILI baseline, tek gün (src/ql_environment.py BaselineEnv).
 2. Q-Learning ajanları n_episodes boyunca eğit.
 3. Q-Learning ajanlarını greedy (ε=0) modunda değerlendir.
 4. Her iki sonucu karşılaştıran metrikler ve grafikler üret.
@@ -30,6 +35,7 @@ from src.config import SimConfig
 from src.ql_environment import QLearningEnv, BaselineEnv
 from src.reinforce_environment import REINFORCEEnv
 from src.metrics import MetricsCollector
+from src.random_environment import run_random_baseline
 
 
 # ---------------------------------------------------------------------------
@@ -65,8 +71,14 @@ def _print_comparison_3way(
     ql_metrics: MetricsCollector,
     nn_metrics: MetricsCollector,
     file=None,
+    bl_label: str = "Baseline",
+    bl_note: Optional[str] = None,
 ):
-    """Baseline / Q-Learning / REINFORCE-NN üç sütunlu karşılaştırma tablosu."""
+    """Baseline / Q-Learning / REINFORCE-NN üç sütunlu karşılaştırma tablosu.
+
+    bl_label : baseline sütun başlığı (en fazla 10 karakter)
+    bl_note  : tablo altına yazılan açıklama (ör. rastgele baseline çekiliş sayısı)
+    """
     bl_cost  = sum(bl_metrics.agent_total_cost.values())
     ql_cost  = sum(ql_metrics.agent_total_cost.values())
     nn_cost  = sum(nn_metrics.agent_total_cost.values())
@@ -158,21 +170,23 @@ def _print_comparison_3way(
 
     _w()
     _w("+" + "=" * width + "+")
-    _w(f"|{'  3-YOL KARSILASTIRMA: Baseline | QL(Alici+Satici) | NN(Alici+Satici)':^{width}}|")
+    _w(f"|{'  3-YOL KARSILASTIRMA: ' + bl_label + ' | QL(Alici+Satici) | NN(Alici+Satici)':^{width}}|")
     _w("+" + "=" * width + "+")
-    _w(f"|  {'Metrik':<26} {'Baseline':>10} {'QL(B+S)':>10} {'NN(B+S)':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
+    _w(f"|  {'Metrik':<26} {bl_label:>10} {'QL(B+S)':>10} {'NN(B+S)':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
     _w(f"|  {'-' * (width - 4)}  |")
     for label, bv, qv, nv, dql, dnn in rows:
         _w(f"|  {label:<26} {bv} {qv} {nv}  {dql}  {dnn}  |")
     _w("+" + "=" * width + "+")
     _w("  (ΔQL, ΔNN = Baseline'a göre değişim yüzdesi)")
+    if bl_note:
+        _w(f"  ({bl_note})")
     _w()
 
     # ── Hocanın istediği: Satıcı Geliri & Alıcı Maliyet tablosu ─────────
     _w("+" + "=" * width + "+")
     _w(f"|{'  SATICI GELİRİ & ALICI MALİYET ANALİZİ':^{width}}|")
     _w("+" + "=" * width + "+")
-    _w(f"|  {'Kalem':<30} {'Baseline':>10} {'QL(B+S)':>10} {'NN(B+S)':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
+    _w(f"|  {'Kalem':<30} {bl_label:>10} {'QL(B+S)':>10} {'NN(B+S)':>10}  {'ΔQL':>7}  {'ΔNN':>7}  |")
     _w(f"|  {'-' * (width - 4)}  |")
     welfare_rows = [
         ("SATICI: P2P Geliri ($)",
@@ -199,6 +213,8 @@ def _print_comparison_3way(
     _w("+" + "=" * width + "+")
     _w("  * P2P sıfır toplamlıdır: satıcı P2P geliri = alıcı P2P maliyeti")
     _w("  * Toplam alıcı maliyeti düşüyorsa sistem alıcıya fayda sağlıyor demektir.")
+    if bl_note:
+        _w(f"  * {bl_note}")
     _w()
 
 
@@ -209,13 +225,17 @@ def plot_comparison(
     save_dir: str = ".",
     nn_metrics: Optional[MetricsCollector] = None,
     nn_episode_costs: Optional[List[float]] = None,
+    bl_label: str = "Baseline",
 ):
-    """4 panel karşılaştırma grafiği oluşturur. NN verisi varsa 3 model gösterilir."""
+    """4 panel karşılaştırma grafiği oluşturur. NN verisi varsa 3 model gösterilir.
+
+    bl_label : baseline'ın lejant / başlık etiketi
+    """
     has_nn = nn_metrics is not None
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
-    title = ("3-Yol Karşılaştırma: Baseline | QL(Alıcı+Satıcı) | NN(Alıcı+Satıcı)"
-             if has_nn else "Q-Learning vs Baseline — Karşılaştırma")
+    title = (f"3-Yol Karşılaştırma: {bl_label} | QL(Alıcı+Satıcı) | NN(Alıcı+Satıcı)"
+             if has_nn else f"Q-Learning vs {bl_label} — Karşılaştırma")
     fig.suptitle(title, fontsize=15, fontweight="bold")
 
     hours_bl = np.arange(len(bl_metrics.hourly)) * 0.5
@@ -229,7 +249,7 @@ def plot_comparison(
     ql_prices_d = np.where(ql_prices > 0, ql_prices, np.nan)
 
     ax.plot(hours_bl, bl_prices_d, "b--o", markersize=3, linewidth=1.4,
-            label="Baseline", alpha=0.8)
+            label=bl_label, alpha=0.8)
     ax.plot(hours_ql, ql_prices_d, "r-s",  markersize=3, linewidth=1.4,
             label="Q-Learning (eval)", alpha=0.8)
     if has_nn:
@@ -253,7 +273,7 @@ def plot_comparison(
         hours_nn = np.arange(len(nn_metrics.hourly)) * 0.5
         w = 0.13
         ax.bar(hours_bl - w, bl_vol, width=w*1.8, color="steelblue",
-               label="Baseline", alpha=0.75)
+               label=bl_label, alpha=0.75)
         ax.bar(hours_ql,      ql_vol, width=w*1.8, color="tomato",
                label="Q-Learning", alpha=0.75)
         ax.bar(hours_nn + w, nn_vol, width=w*1.8, color="mediumseagreen",
@@ -261,7 +281,7 @@ def plot_comparison(
     else:
         w = 0.18
         ax.bar(hours_bl - w, bl_vol, width=w*1.8, color="steelblue",
-               label="Baseline", alpha=0.75)
+               label=bl_label, alpha=0.75)
         ax.bar(hours_ql + w, ql_vol, width=w*1.8, color="tomato",
                label="Q-Learning", alpha=0.75)
     ax.set_title("Saatlik İşlem Hacmi (kWh)")
@@ -283,7 +303,7 @@ def plot_comparison(
         nn_bills = [nn_metrics.agent_total_cost[i] for i in agent_ids]
         w = 0.25
         ax.bar(x - w, bl_bills, width=w, color="steelblue",
-               label="Baseline", alpha=0.8, edgecolor="black", linewidth=0.5)
+               label=bl_label, alpha=0.8, edgecolor="black", linewidth=0.5)
         ax.bar(x,     ql_bills, width=w, color="tomato",
                label="Q-Learning", alpha=0.8, edgecolor="black", linewidth=0.5)
         ax.bar(x + w, nn_bills, width=w, color="mediumseagreen",
@@ -291,7 +311,7 @@ def plot_comparison(
     else:
         w = 0.35
         ax.bar(x - w/2, bl_bills, width=w, color="steelblue",
-               label="Baseline", alpha=0.8, edgecolor="black", linewidth=0.5)
+               label=bl_label, alpha=0.8, edgecolor="black", linewidth=0.5)
         ax.bar(x + w/2, ql_bills, width=w, color="tomato",
                label="Q-Learning", alpha=0.8, edgecolor="black", linewidth=0.5)
 
@@ -386,10 +406,14 @@ def run_comparison(
     save_dir: str = ".",
     verbose: bool = True,
     summary_file=None,
+    baseline: str = "random",
+    baseline_draws: int = 200,
 ) -> Tuple:
     """Tam 3-yol karşılaştırma pipeline'ını çalıştır.
 
-    1. Baseline tek gün
+    1. Baseline — baseline="random": rastgele ZI baseline, aynı gün üzerinde
+       baseline_draws fiyat çekilişinin ortalaması (varsayılan);
+       baseline="mb": kural tabanlı MB/UILI baseline, tek gün
     2. Q-Learning  → n_episodes eğitim + greedy değerlendirme
     3. REINFORCE-NN → nn_episodes eğitim + deterministik değerlendirme
     4. 3-yol tablo + grafik + log dosyası
@@ -408,16 +432,43 @@ def run_comparison(
     seed_everything(config.seed)
 
     # ── 1. Baseline ──────────────────────────────────────────────────
-    if verbose:
-        print("\n" + "=" * 60)
-        print("  ADIM 1/3 — Baseline (Kural Tabanlı) Çalıştırılıyor")
-        print("=" * 60)
-    bl_env     = BaselineEnv(config)
-    bl_metrics = bl_env.run_baseline(seed=config.seed, verbose=verbose)
+    # NOT: Rastgele baseline GLOBAL RNG tüketmez (ajan başına ayrı Generator,
+    # bkz. src/random_agent.py); bu yüzden QL/NN sonuçları baseline seçiminden
+    # bağımsızdır ve seed_everything() sonrası adım sırası değişmemiştir.
+    if baseline == "random":
+        bl_label = "Random"
+        bl_note  = f"Baseline = rastgele ZI baseline, {baseline_draws} fiyat çekilişi ortalaması"
+        if verbose:
+            print("\n" + "=" * 60)
+            print(f"  ADIM 1/3 — Random Baseline (ZI, {baseline_draws} çekiliş) Çalıştırılıyor")
+            print("=" * 60)
+        bl_metrics = run_random_baseline(
+            config, n_draws=baseline_draws, seed=config.seed, verbose=False,
+        )
+        if verbose:
+            print(bl_metrics.format_table())
 
-    if summary_file is not None:
-        summary_file.write("\n[ADIM 1/3] BASELINE SONUÇLARI\n")
-        summary_file.write(bl_metrics.summary() + "\n")
+        if summary_file is not None:
+            summary_file.write(
+                f"\n[ADIM 1/3] RANDOM BASELINE SONUÇLARI (ZI, {baseline_draws} çekiliş ortalaması)\n"
+            )
+            summary_file.write(bl_metrics.summary() + "\n")
+            summary_file.write(bl_metrics.format_table() + "\n")
+    elif baseline == "mb":
+        bl_label = "Baseline"
+        bl_note  = None
+        if verbose:
+            print("\n" + "=" * 60)
+            print("  ADIM 1/3 — Baseline (Kural Tabanlı) Çalıştırılıyor")
+            print("=" * 60)
+        bl_env     = BaselineEnv(config)
+        bl_metrics = bl_env.run_baseline(seed=config.seed, verbose=verbose)
+
+        if summary_file is not None:
+            summary_file.write("\n[ADIM 1/3] BASELINE SONUÇLARI\n")
+            summary_file.write(bl_metrics.summary() + "\n")
+    else:
+        raise ValueError(f"Bilinmeyen baseline: {baseline!r} (random | mb)")
 
     # ── 2. Q-Learning Eğitim + Değerlendirme ─────────────────────────
     if verbose:
@@ -456,11 +507,15 @@ def run_comparison(
         summary_file.write(nn_metrics.summary() + "\n")
 
     # ── 4. 3-Yol Karşılaştırma Tablosu ───────────────────────────────
-    _print_comparison_3way(bl_metrics, ql_metrics, nn_metrics, file=summary_file)
+    _print_comparison_3way(bl_metrics, ql_metrics, nn_metrics, file=summary_file,
+                           bl_label=bl_label, bl_note=bl_note)
 
     # ── 5. Welfare summary (her model için ayrı ayrı) ─────────────────
     n_prod = config.n_producers
-    for label, m in [("BASELINE", bl_metrics), ("Q-LEARNING", ql_metrics), ("REINFORCE-NN", nn_metrics)]:
+    bl_welfare_label = (
+        f"RANDOM BASELINE ({baseline_draws} CEKILIS ORT.)" if baseline == "random" else "BASELINE"
+    )
+    for label, m in [(bl_welfare_label, bl_metrics), ("Q-LEARNING", ql_metrics), ("REINFORCE-NN", nn_metrics)]:
         welfare_str = m.summary_welfare(n_prod)
         print(f"\n[{label}]")
         print(welfare_str)
@@ -470,6 +525,8 @@ def run_comparison(
     plot_comparison(
         bl_metrics, ql_metrics, ql_ep_costs, save_dir=save_dir,
         nn_metrics=nn_metrics, nn_episode_costs=nn_ep_costs,
+        bl_label=(f"Random Baseline (ZI, {baseline_draws} çekiliş ort.)"
+                  if baseline == "random" else "Baseline"),
     )
     plot_training_curve(ql_ep_costs, save_dir=save_dir)
 
@@ -507,7 +564,21 @@ if __name__ == "__main__":
         "--log_name", type=str, default="overall_summary.txt",
         help="Log dosyası adı (varsayılan: overall_summary.txt)",
     )
+    parser.add_argument(
+        "--baseline", type=str, choices=["random", "mb"], default="random",
+        help="Baseline türü: random = rastgele ZI (çekiliş ortalaması), "
+             "mb = kural tabanlı MB/UILI (varsayılan: random)",
+    )
+    parser.add_argument(
+        "--baseline_draws", type=int, default=200,
+        help="Random baseline fiyat çekilişi sayısı (varsayılan: 200)",
+    )
     args = parser.parse_args()
+
+    if args.baseline == "random":
+        bl_header = f"Random Baseline (ZI, {args.baseline_draws} cekilis ort.)"
+    else:
+        bl_header = "Baseline"
 
     os.makedirs(args.save_dir, exist_ok=True)
     log_path = os.path.join(args.save_dir, args.log_name)
@@ -522,7 +593,7 @@ if __name__ == "__main__":
             f"  Tarih : {ts}\n"
             f"  QL Episodes : {args.episodes}  |  NN Episodes : {args.nn_episodes}\n"
             f"  beta={args.beta:.2f}  |  curtail_rate={args.curtail_rate:.2f}  |  seed={args.seed}\n"
-            f"  Modeller: Baseline | QL(Alici+Satici) | NN(Alici+Satici)\n"
+            f"  Modeller: {bl_header} | QL(Alici+Satici) | NN(Alici+Satici)\n"
             f"{'='*84}\n"
         )
         print(header, end="")
@@ -554,6 +625,8 @@ if __name__ == "__main__":
                 save_dir=lam_dir,
                 verbose=False,
                 summary_file=sf,
+                baseline=args.baseline,
+                baseline_draws=args.baseline_draws,
             )
 
     print(f"\nSimülasyon log dosyasi olusturuldu: {log_path}")
