@@ -21,12 +21,10 @@ from __future__ import annotations
 
 import argparse
 import os
-import random
 from datetime import datetime
 from typing import List, Optional, Tuple
 
 import numpy as np
-import torch
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -36,6 +34,9 @@ from src.ql_environment import QLearningEnv, BaselineEnv
 from src.reinforce_environment import REINFORCEEnv
 from src.metrics import MetricsCollector
 from src.random_environment import run_random_baseline
+# seed_everything src/seeding.py'ye taşındı (experiment.py ile ortak); geriye dönük
+# uyumluluk için buradan da içe aktarılabilir: from src.comparison import seed_everything
+from src.seeding import seed_everything
 
 
 # ---------------------------------------------------------------------------
@@ -47,25 +48,6 @@ def _safe_avg(arr: np.ndarray) -> float:
     return float(np.mean(valid)) if len(valid) > 0 else 0.0
 
 
-def seed_everything(seed: int) -> None:
-    """Tüm GLOBAL rastgelelik kaynaklarını sabitler — tekrarlanabilirlik için.
-
-    Profiller ve ajan parametre varyasyonu zaten seed'li `np.random.default_rng`
-    kullanıyordu; Baseline bu yüzden her çalıştırmada birebir aynı çıkıyordu.
-    Ancak öğrenen ajanlar seed'lenmemiş GLOBAL RNG'lere bağlıydı:
-
-        ql_agent.py       : np.random.random() / np.random.randint()  → ε-greedy keşif
-        reinforce_agent.py: torch.randn_like()                        → Gauss gürültüsü
-        PolicyNet         : torch varsayılan ağırlık başlangıcı
-
-    Bu yüzden aynı komut aynı kodla farklı QL/NN sonuçları veriyordu (ör. QL satıcı
-    geliri bir çalıştırmada +%19.4, diğerinde −%9.1). Burada hepsi sabitleniyor.
-    """
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-
 def _print_comparison_3way(
     bl_metrics: MetricsCollector,
     ql_metrics: MetricsCollector,
@@ -73,11 +55,14 @@ def _print_comparison_3way(
     file=None,
     bl_label: str = "Baseline",
     bl_note: Optional[str] = None,
+    n_producers: Optional[int] = None,
 ):
     """Baseline / Q-Learning / REINFORCE-NN üç sütunlu karşılaştırma tablosu.
 
-    bl_label : baseline sütun başlığı (en fazla 10 karakter)
-    bl_note  : tablo altına yazılan açıklama (ör. rastgele baseline çekiliş sayısı)
+    bl_label    : baseline sütun başlığı (en fazla 10 karakter)
+    bl_note     : tablo altına yazılan açıklama (ör. rastgele baseline çekiliş sayısı)
+    n_producers : üretici (satıcı) ajan sayısı — config.n_producers verilmelidir.
+                  None ise eski davranış (n_agents // 2; yalnızca N+N için doğru).
     """
     bl_cost  = sum(bl_metrics.agent_total_cost.values())
     ql_cost  = sum(ql_metrics.agent_total_cost.values())
@@ -104,7 +89,9 @@ def _print_comparison_3way(
     ql_reward = ql_metrics.p2p_ratio() * 100
     nn_reward = nn_metrics.p2p_ratio() * 100
 
-    n_prod = bl_metrics.n_agents // 2
+    # Eskiden her zaman n_agents // 2 idi → 10+20 gibi dengesiz popülasyonlarda
+    # satıcı/alıcı ayrımı yanlış olurdu. Artık config.n_producers kullanılır.
+    n_prod = n_producers if n_producers is not None else bl_metrics.n_agents // 2
 
     # Hocanın istediği: gerçek satıcı geliri ve alıcı maliyeti
     bl_seller_rev   = bl_metrics.total_seller_revenue(n_prod)
@@ -226,10 +213,12 @@ def plot_comparison(
     nn_metrics: Optional[MetricsCollector] = None,
     nn_episode_costs: Optional[List[float]] = None,
     bl_label: str = "Baseline",
+    n_producers: Optional[int] = None,
 ):
     """4 panel karşılaştırma grafiği oluşturur. NN verisi varsa 3 model gösterilir.
 
-    bl_label : baseline'ın lejant / başlık etiketi
+    bl_label    : baseline'ın lejant / başlık etiketi
+    n_producers : ajan etiketleri (Pr / C) için üretici sayısı; None → n_agents // 2
     """
     has_nn = nn_metrics is not None
 
@@ -296,7 +285,8 @@ def plot_comparison(
     bl_bills  = [bl_metrics.agent_total_cost[i] for i in agent_ids]
     ql_bills  = [ql_metrics.agent_total_cost[i] for i in agent_ids]
     x = np.arange(len(agent_ids))
-    labels = [f"Pr{i+1}" if i < len(agent_ids)//2 else f"C{i - len(agent_ids)//2 + 1}"
+    n_prod = n_producers if n_producers is not None else len(agent_ids) // 2
+    labels = [f"Pr{i+1}" if i < n_prod else f"C{i - n_prod + 1}"
               for i in range(len(agent_ids))]
 
     if has_nn:
@@ -508,7 +498,8 @@ def run_comparison(
 
     # ── 4. 3-Yol Karşılaştırma Tablosu ───────────────────────────────
     _print_comparison_3way(bl_metrics, ql_metrics, nn_metrics, file=summary_file,
-                           bl_label=bl_label, bl_note=bl_note)
+                           bl_label=bl_label, bl_note=bl_note,
+                           n_producers=config.n_producers)
 
     # ── 5. Welfare summary (her model için ayrı ayrı) ─────────────────
     n_prod = config.n_producers
@@ -527,6 +518,7 @@ def run_comparison(
         nn_metrics=nn_metrics, nn_episode_costs=nn_ep_costs,
         bl_label=(f"Random Baseline (ZI, {baseline_draws} çekiliş ort.)"
                   if baseline == "random" else "Baseline"),
+        n_producers=config.n_producers,
     )
     plot_training_curve(ql_ep_costs, save_dir=save_dir)
 

@@ -106,18 +106,33 @@ class RandomBaselineEnv(EnergyTradingEnv):
         Ajan rolleriyle aynı eşikler kullanılır: |net| <= 0.01 olan ajan emir
         vermediği için ne S_t'ye ne D_t'ye katılır.
         """
-        e_max = 0.0
-        for t in range(self.config.t_hours):
-            surplus = 0.0
-            deficit = 0.0
-            for i in range(self.config.n_agents):
-                net = self.profiles.get_inflexible_load(i, t)
-                if net > 0.01:
-                    deficit += net
-                elif net < -0.01:
-                    surplus += -net
-            e_max += min(surplus, deficit)
-        return e_max
+        return community_balance(self.profiles, self.config)["e_max_kwh"]
+
+
+def community_balance(profiles, config: SimConfig) -> Dict[str, float]:
+    """Bir günün profil tabanlı topluluk dengesi (fiyattan / stratejiden bağımsız).
+
+        surplus_kwh = S = Σ_t S_t,   deficit_kwh = D = Σ_t D_t,
+        e_max_kwh   = E_max = Σ_t min(S_t, D_t)
+
+    RandomBaselineEnv.max_p2p_energy() ile aynı eşikler ve aynı toplama sırası.
+    """
+    e_max = 0.0
+    s_tot = 0.0
+    d_tot = 0.0
+    for t in range(config.t_hours):
+        surplus = 0.0
+        deficit = 0.0
+        for i in range(config.n_agents):
+            net = profiles.get_inflexible_load(i, t)
+            if net > 0.01:
+                deficit += net
+            elif net < -0.01:
+                surplus += -net
+        e_max += min(surplus, deficit)
+        s_tot += surplus
+        d_tot += deficit
+    return {"surplus_kwh": s_tot, "deficit_kwh": d_tot, "e_max_kwh": e_max}
 
 
 # ---------------------------------------------------------------------------

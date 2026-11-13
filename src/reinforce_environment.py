@@ -48,6 +48,7 @@ class REINFORCEEnv(EnergyTradingEnv):
         hidden: int = 64,
         seq_len: int = 12,   # geçmiş fiyat penceresi (12 = 6 saat)
         d_model: int = 16,   # positional embedding boyutu
+        n_layers: int = 2,   # politika ağının gizli katman sayısı (varsayılan = eski ağ)
     ):
         super().__init__(config)
         self.nn_lr          = lr
@@ -58,6 +59,7 @@ class REINFORCEEnv(EnergyTradingEnv):
         self.nn_hidden      = hidden
         self.nn_seq_len     = seq_len
         self.nn_d_model     = d_model
+        self.nn_n_layers    = n_layers
 
         self.training_enabled = True
 
@@ -131,6 +133,7 @@ class REINFORCEEnv(EnergyTradingEnv):
                     hidden=self.nn_hidden,
                     seq_len=self.nn_seq_len,
                     d_model=self.nn_d_model,
+                    n_layers=self.nn_n_layers,
                 )
                 self._rf_agents[aid] = rf_agent
                 new_agents.append(rf_agent)

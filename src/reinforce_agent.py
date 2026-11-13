@@ -126,8 +126,14 @@ class PolicyNet(nn.Module):
         TimeSeriesEncoder(history [K])       → ts_emb [d_model]
         concat(state [state_dim], ts_emb)    → [state_dim + d_model] = 3 + 16 = 19
         Linear → ReLU → Linear → ReLU → Linear → Sigmoid  →  a ∈ [0,1]
+        (n_layers = 2 gizli katman; n_layers > 2 ise araya hidden→hidden
+         Linear + ReLU blokları eklenir, genişlik aynı kalır)
 
     W = θ: tüm parametreler (hocanın Theta Weight ifadesi).
+
+    n_layers: gizli katman sayısı (varsayılan 2). Varsayılanla ağ ESKİSİYLE
+    birebir aynı kurulur — aynı katmanlar, aynı oluşturma sırası, aynı
+    nn.Sequential indeksleri — dolayısıyla aynı seed'de aynı başlangıç ağırlıkları.
     """
 
     def __init__(
@@ -136,19 +142,19 @@ class PolicyNet(nn.Module):
         seq_len:   int = 12,
         d_model:   int = 16,
         hidden:    int = 64,
+        n_layers:  int = 2,
     ):
         super().__init__()
+        if n_layers < 1:
+            raise ValueError("n_layers en az 1 olmalıdır")
         self.ts_encoder  = TimeSeriesEncoder(seq_len=seq_len, d_model=d_model)
         combined_dim     = state_dim + d_model   # 3 + 16 = 19
 
-        self.policy_head = nn.Sequential(
-            nn.Linear(combined_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, 1),
-            nn.Sigmoid(),   # a ∈ [0, 1]
-        )
+        layers = [nn.Linear(combined_dim, hidden), nn.ReLU()]
+        for _ in range(n_layers - 1):
+            layers += [nn.Linear(hidden, hidden), nn.ReLU()]
+        layers += [nn.Linear(hidden, 1), nn.Sigmoid()]   # a ∈ [0, 1]
+        self.policy_head = nn.Sequential(*layers)
 
     def forward(
         self,
@@ -197,6 +203,7 @@ class REINFORCEAgent(EnergyAgent):
         hidden:      int   = 64,
         seq_len:     int   = 12,    # kaç adım geçmişe bakılır (12 = 6 saat)
         d_model:     int   = 16,    # positional embedding boyutu
+        n_layers:    int   = 2,     # politika ağının gizli katman sayısı
     ):
         super().__init__(agent_id, agent_type, mb_params, mc_params, config)
 
@@ -207,6 +214,7 @@ class REINFORCEAgent(EnergyAgent):
         self.sigma_decay = sigma_decay
         self.seq_len     = seq_len
         self.d_model     = d_model
+        self.n_layers    = n_layers
 
         self.fit_price = config.fit_price
         self.tou_price = config.tou_price
@@ -219,13 +227,15 @@ class REINFORCEAgent(EnergyAgent):
 
         # Satıcı politika ağı ve optimizer
         self.policy_net = PolicyNet(
-            state_dim=3, seq_len=seq_len, d_model=d_model, hidden=hidden
+            state_dim=3, seq_len=seq_len, d_model=d_model, hidden=hidden,
+            n_layers=n_layers,
         )
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
         # Alıcı politika ağı ve optimizer (satıcıyla simetrik, ayrı ağırlıklar)
         self.buy_policy_net = PolicyNet(
-            state_dim=3, seq_len=seq_len, d_model=d_model, hidden=hidden
+            state_dim=3, seq_len=seq_len, d_model=d_model, hidden=hidden,
+            n_layers=n_layers,
         )
         self.buy_optimizer = optim.Adam(self.buy_policy_net.parameters(), lr=lr)
 

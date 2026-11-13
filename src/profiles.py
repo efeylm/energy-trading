@@ -90,13 +90,36 @@ class ProfileManager:
         
         self._generate_all_profiles()
     
+    def _profile_slot(self, i: int) -> int:
+        """Ajan i'nin profil şekli için kullanılan "yuva" indeksi.
+
+        generate_pv_profile / generate_load_profile ajan farkını agent_id % 4 ve
+        agent_id % 8 ile üretir; bu formüller 4 üretici (id 0-3) + 4 tüketici
+        (id 4-7) için tasarlanmıştı: üreticiler hafif yük çarpanı 0.8-1.25
+        (yuva 0-3), tüketiciler ağır yük çarpanı 1.4-1.85 (yuva 4-7) alır.
+        Ham agent_id kullanılsaydı başka popülasyonlarda karışım sessizce
+        değişirdi (ör. 10+10'da id 4-7 üreticiler tüketici çarpanlarını, id 8-9
+        tüketiciler ise 0.8/0.95 gibi üretici çarpanlarını alırdı) ve popülasyon
+        boyutu deneyi talep/arz dengesindeki bu kaymayla karışırdı.
+
+        Bu yüzden yuva TÜR İÇİ sıraya göre verilir:
+            üretici j  → j % 4          (0..3)
+            tüketici j → 4 + (j % 4)    (4..7)
+        4+4 popülasyonunda yuva == agent_id olduğundan profiller (ve tüm eski
+        sonuçlar) birebir aynıdır. RNG çekiliş sırası da değişmez.
+        """
+        if i < self.n_producers:
+            return i % 4
+        return 4 + (i - self.n_producers) % 4
+
     def _generate_all_profiles(self):
         """Generate profiles for all agents."""
         for i in range(self.n_agents):
+            slot = self._profile_slot(i)
             # PV generation: only producers have PV panels
             if i < self.n_producers:
                 self.pv_profiles[i] = generate_pv_profile(
-                    i,
+                    slot,
                     peak_kw=9.0,
                     noise_std=0.25,
                     rng=self.rng,
@@ -108,7 +131,7 @@ class ProfileManager:
             if i < self.n_producers:
                 # Producers: light load to ensure they have surplus to sell
                 self.load_profiles[i] = generate_load_profile(
-                    i,
+                    slot,
                     base_kw=0.8,
                     peak_kw=2.5,
                     noise_std=0.2,
@@ -117,7 +140,7 @@ class ProfileManager:
             else:
                 # Consumers: typical higher load
                 self.load_profiles[i] = generate_load_profile(
-                    i,
+                    slot,
                     base_kw=2.0,
                     peak_kw=5.8,
                     noise_std=0.35,
