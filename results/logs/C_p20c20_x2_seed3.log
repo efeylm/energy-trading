@@ -1,0 +1,27 @@
+[22:21:56] İŞ başlıyor: C | 20+20 | seed=3 | yöntemler=ql,nn | E_max=1235.84 kWh
+[22:21:56] ql: başlıyor (6000 episode)
+[22:22:21]   ql: episode 600/6000 ( 10%) |     24.2s geçti | kalan ~   217.4s
+[22:22:45]   ql: episode 1200/6000 ( 20%) |     48.6s geçti | kalan ~   194.4s
+[22:23:10]   ql: episode 1800/6000 ( 30%) |     73.2s geçti | kalan ~   170.7s
+[22:23:34]   ql: episode 2400/6000 ( 40%) |     97.9s geçti | kalan ~   146.9s
+[22:23:59]   ql: episode 3000/6000 ( 50%) |    122.7s geçti | kalan ~   122.7s
+[22:24:24]   ql: episode 3600/6000 ( 60%) |    147.7s geçti | kalan ~    98.5s
+[22:24:49]   ql: episode 4200/6000 ( 70%) |    172.7s geçti | kalan ~    74.0s
+[22:25:14]   ql: episode 4800/6000 ( 80%) |    197.8s geçti | kalan ~    49.5s
+[22:25:39]   ql: episode 5400/6000 ( 90%) |    222.8s geçti | kalan ~    24.8s
+[22:26:04]   ql: episode 6000/6000 (100%) |    247.7s geçti | kalan ~     0.0s
+[22:26:04] ql: bitti (eğitim 247.7s, değerlendirme 0.03s) | η=94.17%
+[22:26:04] nn: başlıyor (14000 episode, 2×64 gizli katman)
+[22:33:08]   nn: episode 1400/14000 ( 10%) |    423.6s geçti | kalan ~  3812.5s
+[22:40:13]   nn: episode 2800/14000 ( 20%) |    848.8s geçti | kalan ~  3395.2s
+[22:47:19]   nn: episode 4200/14000 ( 30%) |   1275.3s geçti | kalan ~  2975.6s
+[22:54:25]   nn: episode 5600/14000 ( 40%) |   1701.4s geçti | kalan ~  2552.0s
+[23:01:27]   nn: episode 7000/14000 ( 50%) |   2123.1s geçti | kalan ~  2123.1s
+[23:08:34]   nn: episode 8400/14000 ( 60%) |   2549.5s geçti | kalan ~  1699.7s
+[23:15:40]   nn: episode 9800/14000 ( 70%) |   2976.1s geçti | kalan ~  1275.5s
+[23:22:46]   nn: episode 11200/14000 ( 80%) |   3401.7s geçti | kalan ~   850.4s
+[23:29:49]   nn: episode 12600/14000 ( 90%) |   3824.8s geçti | kalan ~   425.0s
+[23:36:52]   nn: episode 14000/14000 (100%) |   4247.9s geçti | kalan ~     0.0s
+[23:36:52] nn: bitti (eğitim 4247.9s, değerlendirme 0.11s) | η=100.00%
+[23:36:52] İŞ bitti: toplam 4495.8s
+[23:36:52] JSON yazıldı: /home/developer/energy-trading/results/C_p20c20_x2_seed3.json

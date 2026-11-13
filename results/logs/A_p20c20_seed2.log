@@ -1,0 +1,29 @@
+[22:21:56] İŞ başlıyor: A | 20+20 | seed=2 | yöntemler=random,ql,nn | E_max=1246.13 kWh
+[22:21:56] random: başlıyor (200 fiyat çekilişi)
+[22:22:00] random: bitti (3.9s) | η=57.94%
+[22:22:00] ql: başlıyor (3000 episode)
+[22:22:12]   ql: episode 300/3000 ( 10%) |     12.0s geçti | kalan ~   108.4s
+[22:22:24]   ql: episode 600/3000 ( 20%) |     24.2s geçti | kalan ~    96.9s
+[22:22:37]   ql: episode 900/3000 ( 30%) |     36.5s geçti | kalan ~    85.1s
+[22:22:49]   ql: episode 1200/3000 ( 40%) |     48.8s geçti | kalan ~    73.2s
+[22:23:01]   ql: episode 1500/3000 ( 50%) |     61.1s geçti | kalan ~    61.1s
+[22:23:14]   ql: episode 1800/3000 ( 60%) |     73.5s geçti | kalan ~    49.0s
+[22:23:26]   ql: episode 2100/3000 ( 70%) |     85.8s geçti | kalan ~    36.8s
+[22:23:38]   ql: episode 2400/3000 ( 80%) |     98.2s geçti | kalan ~    24.5s
+[22:23:51]   ql: episode 2700/3000 ( 90%) |    110.5s geçti | kalan ~    12.3s
+[22:24:03]   ql: episode 3000/3000 (100%) |    122.9s geçti | kalan ~     0.0s
+[22:24:03] ql: bitti (eğitim 122.9s, değerlendirme 0.03s) | η=94.15%
+[22:24:03] nn: başlıyor (7000 episode, 2×64 gizli katman)
+[22:27:32]   nn: episode 700/7000 ( 10%) |    208.9s geçti | kalan ~  1879.7s
+[22:31:05]   nn: episode 1400/7000 ( 20%) |    422.2s geçti | kalan ~  1688.9s
+[22:34:39]   nn: episode 2100/7000 ( 30%) |    635.7s geçti | kalan ~  1483.3s
+[22:38:13]   nn: episode 2800/7000 ( 40%) |    849.6s geçti | kalan ~  1274.3s
+[22:41:47]   nn: episode 3500/7000 ( 50%) |   1063.7s geçti | kalan ~  1063.7s
+[22:45:21]   nn: episode 4200/7000 ( 60%) |   1277.8s geçti | kalan ~   851.9s
+[22:48:55]   nn: episode 4900/7000 ( 70%) |   1491.8s geçti | kalan ~   639.4s
+[22:52:29]   nn: episode 5600/7000 ( 80%) |   1705.9s geçti | kalan ~   426.5s
+[22:56:03]   nn: episode 6300/7000 ( 90%) |   1919.7s geçti | kalan ~   213.3s
+[22:59:36]   nn: episode 7000/7000 (100%) |   2132.8s geçti | kalan ~     0.0s
+[22:59:36] nn: bitti (eğitim 2132.8s, değerlendirme 0.11s) | η=99.28%
+[22:59:36] İŞ bitti: toplam 2259.8s
+[22:59:36] JSON yazıldı: /home/developer/energy-trading/results/A_p20c20_seed2.json

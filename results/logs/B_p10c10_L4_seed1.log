@@ -1,0 +1,15 @@
+[23:03:44] İŞ başlıyor: B | 10+10 | seed=1 | yöntemler=nn | E_max=601.12 kWh
+[23:03:44] nn: başlıyor (7000 episode, 4×64 gizli katman)
+[23:05:56]   nn: episode 700/7000 ( 10%) |    132.2s geçti | kalan ~  1189.6s
+[23:08:02]   nn: episode 1400/7000 ( 20%) |    258.3s geçti | kalan ~  1033.0s
+[23:10:08]   nn: episode 2100/7000 ( 30%) |    384.4s geçti | kalan ~   896.9s
+[23:12:15]   nn: episode 2800/7000 ( 40%) |    510.6s geçti | kalan ~   766.0s
+[23:14:21]   nn: episode 3500/7000 ( 50%) |    636.9s geçti | kalan ~   636.9s
+[23:16:27]   nn: episode 4200/7000 ( 60%) |    763.0s geçti | kalan ~   508.7s
+[23:18:33]   nn: episode 4900/7000 ( 70%) |    889.3s geçti | kalan ~   381.1s
+[23:20:39]   nn: episode 5600/7000 ( 80%) |   1015.5s geçti | kalan ~   253.9s
+[23:22:46]   nn: episode 6300/7000 ( 90%) |   1141.7s geçti | kalan ~   126.9s
+[23:24:52]   nn: episode 7000/7000 (100%) |   1268.1s geçti | kalan ~     0.0s
+[23:24:52] nn: bitti (eğitim 1268.1s, değerlendirme 0.06s) | η=100.00%
+[23:24:52] İŞ bitti: toplam 1268.1s
+[23:24:52] JSON yazıldı: /home/developer/energy-trading/results/B_p10c10_L4_seed1.json

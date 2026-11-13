@@ -1,0 +1,15 @@
+[23:30:01] İŞ başlıyor: B | 4+4 | seed=3 | yöntemler=nn | E_max=251.35 kWh
+[23:30:01] nn: başlıyor (7000 episode, 3×64 gizli katman)
+[23:30:45]   nn: episode 700/7000 ( 10%) |     43.9s geçti | kalan ~   394.8s
+[23:31:28]   nn: episode 1400/7000 ( 20%) |     87.3s geçti | kalan ~   349.1s
+[23:32:12]   nn: episode 2100/7000 ( 30%) |    130.9s geçti | kalan ~   305.4s
+[23:32:55]   nn: episode 2800/7000 ( 40%) |    174.5s geçti | kalan ~   261.7s
+[23:33:39]   nn: episode 3500/7000 ( 50%) |    218.1s geçti | kalan ~   218.1s
+[23:34:22]   nn: episode 4200/7000 ( 60%) |    261.5s geçti | kalan ~   174.4s
+[23:35:06]   nn: episode 4900/7000 ( 70%) |    305.0s geçti | kalan ~   130.7s
+[23:35:49]   nn: episode 5600/7000 ( 80%) |    348.4s geçti | kalan ~    87.1s
+[23:36:31]   nn: episode 6300/7000 ( 90%) |    390.7s geçti | kalan ~    43.4s
+[23:37:13]   nn: episode 7000/7000 (100%) |    432.7s geçti | kalan ~     0.0s
+[23:37:13] nn: bitti (eğitim 432.7s, değerlendirme 0.02s) | η=100.00%
+[23:37:13] İŞ bitti: toplam 432.7s
+[23:37:13] JSON yazıldı: /home/developer/energy-trading/results/B_p4c4_L3_seed3.json
