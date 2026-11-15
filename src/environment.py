@@ -66,6 +66,10 @@ class EnergyTradingEnv:
             n_producers=self.config.n_producers,
             n_consumers=self.config.n_consumers,
             seed=actual_seed,
+            # Yalnızca talep şoku deneyi için; varsayılan 1.0 = değişiklik yok.
+            demand_multiplier=getattr(self.config, "demand_multiplier", 1.0),
+            # Yalnızca arz şoku deneyi için; varsayılan 1.0 = değişiklik yok.
+            supply_multiplier=getattr(self.config, "supply_multiplier", 1.0),
         )
         
         # Random number generator for parameter variation

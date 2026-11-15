@@ -1,0 +1,20 @@
+====================================================================================
+SUPPLY SHOCK — Q-Learning 10+10, seed 1
+  phases: 1: equilibrium x1, episodes 1-6000 | 2: supply shock x2, episodes 6001-11000 | 3: recovery x1, episodes 11001-16000
+  QL: alpha=0.1 gamma=0.95 eps=1.0->0.05 decay=0.985 eps_reset=0.5
+  values: mean of the last 500 training episodes of each phase (exploration on)
+------------------------------------------------------------------------------------
+  Metric                                P1 5501-6000  P2 10501-11000  P3 15501-16000
+------------------------------------------------------------------------------------
+  Avg. clearing price ($/kWh)                 0.1572          0.1237          0.1571
+  Community demand D (kWh/day)               3078.33         3028.01         3077.99
+  Community supply S (kWh/day)                720.85         1711.71          720.80
+  Feasible maximum E_max (kWh/day)            605.70          832.26          605.77
+  P2P volume (kWh/day)                        568.76          780.71          571.65
+  Unmet by P2P = grid buy (kWh/day)          2509.57         2247.30         2506.34
+  Grid sale at FiT (kWh/day)                  152.09          931.00          149.15
+  System reward                              -676.96         -558.46         -676.16
+  Epsilon                                      0.050           0.050           0.050
+------------------------------------------------------------------------------------
+  energy balance check: max |D - P2P - grid buy| = 2.27e-12 kWh, violations = 0
+====================================================================================

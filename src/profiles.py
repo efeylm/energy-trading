@@ -78,10 +78,19 @@ def generate_load_profile(
 class ProfileManager:
     """Manages all agent profiles for a simulation day."""
     
-    def __init__(self, n_producers: int, n_consumers: int, seed: int = 42):
+    def __init__(
+        self,
+        n_producers: int,
+        n_consumers: int,
+        seed: int = 42,
+        demand_multiplier: float = 1.0,
+        supply_multiplier: float = 1.0,
+    ):
         self.n_producers = n_producers
         self.n_consumers = n_consumers
         self.n_agents = n_producers + n_consumers
+        self.demand_multiplier = float(demand_multiplier)
+        self.supply_multiplier = float(supply_multiplier)
         self.rng = np.random.default_rng(seed)
         
         # Pre-generate profiles for all agents
@@ -89,6 +98,33 @@ class ProfileManager:
         self.load_profiles = [None] * self.n_agents
         
         self._generate_all_profiles()
+        self._apply_demand_multiplier()
+        self._apply_supply_multiplier()
+
+    def _apply_demand_multiplier(self):
+        """Talep şoku: TÜKETİCİ yük profillerini demand_multiplier ile çarp.
+
+        Profiller her zamanki gibi (aynı RNG çekiliş sırasıyla) üretildikten
+        SONRA uygulanır; RNG tüketmez. Üreticiler (indeks < n_producers)
+        etkilenmez. Katsayı 1.0 ise hiçbir şey yapılmaz → profiller ve tüm
+        mevcut sonuçlar birebir aynıdır.
+        """
+        if self.demand_multiplier == 1.0:
+            return
+        for i in range(self.n_producers, self.n_agents):
+            self.load_profiles[i] = self.load_profiles[i] * self.demand_multiplier
+
+    def _apply_supply_multiplier(self):
+        """Arz şoku: ÜRETİCİ PV profillerini supply_multiplier ile çarp.
+
+        _apply_demand_multiplier ile birebir benzer: profiller üretildikten
+        SONRA uygulanır, RNG tüketmez; tüketiciler (indeks >= n_producers)
+        etkilenmez. Katsayı 1.0 ise hiçbir şey yapılmaz.
+        """
+        if self.supply_multiplier == 1.0:
+            return
+        for i in range(self.n_producers):
+            self.pv_profiles[i] = self.pv_profiles[i] * self.supply_multiplier
     
     def _profile_slot(self, i: int) -> int:
         """Ajan i'nin profil şekli için kullanılan "yuva" indeksi.

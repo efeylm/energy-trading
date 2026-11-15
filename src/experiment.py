@@ -190,7 +190,9 @@ def run_job(args) -> Dict:
 
     # Değerlendirme günü (gün seed'i = config.seed) için profil tabanlı denge
     day = community_balance(
-        ProfileManager(config.n_producers, config.n_consumers, seed=config.seed), config
+        ProfileManager(config.n_producers, config.n_consumers, seed=config.seed,
+                       demand_multiplier=config.demand_multiplier,
+                       supply_multiplier=config.supply_multiplier), config
     )
     e_max = day["e_max_kwh"]
 

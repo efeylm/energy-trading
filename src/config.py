@@ -124,6 +124,19 @@ class SimConfig:
     # False → Kapalı sistem (eski davranış).
     grid_fallback: bool = True
 
+    # --- Talep şoku (demand shock) ---
+    # YALNIZCA talep şoku deneyi (src/experiment_shock.py) tarafından kullanılır.
+    # Tüketici ajanların (indeks >= n_producers) yük profili bu katsayıyla
+    # çarpılır; üreticiler etkilenmez. 1.0 (varsayılan) = hiçbir değişiklik yok,
+    # tüm mevcut sonuçlar birebir aynıdır.
+    demand_multiplier: float = 1.0
+
+    # --- Arz şoku (supply shock) ---
+    # YALNIZCA şok deneyi (src/experiment_shock.py --shock supply) kullanır.
+    # Üretici ajanların (indeks < n_producers) PV profili bu katsayıyla
+    # çarpılır; tüketiciler etkilenmez. 1.0 (varsayılan) = hiçbir değişiklik yok.
+    supply_multiplier: float = 1.0
+
     @property
     def n_agents(self) -> int:
         return self.n_producers + self.n_consumers
