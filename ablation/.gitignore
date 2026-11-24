@@ -1,0 +1,2 @@
+# Küçük bütçeli deneme çıktıları (python -m ablation.run_all --smoke)
+results_smoke/
