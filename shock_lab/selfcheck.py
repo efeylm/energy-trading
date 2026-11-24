@@ -2,7 +2,7 @@
 Hızlı doğruluk kontrolleri (birkaç dakika):
 
   1. Rejim uygulaması: (d,s) = (2,1) → tüketici yükleri ×2, başka hiçbir şey değişmez;
-     (1,0.5) → üretici PV ×0.5, başka hiçbir şey değişmez; ajan parametreleri ve
+     (1,0.5) → üretici PV ×0.5, başka hiçbir şey değişmez; ajan kimlik/türleri ve
      RNG çekiliş sırası aynı.
   2. src eşdeğerliği: q_normal (ε çarpanı 0.985) ↔ src QLearningEnv.train ve
      nn_normal (σ çarpanı 0.993) ↔ src REINFORCEEnv.train, aynı seed, ilk N episode
@@ -20,7 +20,7 @@ import time
 
 import numpy as np
 
-from shock_lab.common import (chdir_repo_root, ShockQLEnv, NORMAL, run_day, silenced, log,
+from shock_lab.common import (chdir_repo_root, ShockQLEnv, NORMAL, silenced, log,
                               DEFAULT_TRAIN_REGIMES, regime_probs, DEFAULT_NORMAL_PROB)
 from src.config import SimConfig
 from src.seeding import seed_everything
@@ -38,7 +38,7 @@ def check_regime(p: int, c: int) -> bool:
         snaps[r] = (
             np.array([env.profiles.load_profiles[i] for i in range(cfg.n_agents)]),
             np.array([env.profiles.pv_profiles[i] for i in range(cfg.n_agents)]),
-            [(a.mb_params.alpha, a.mb_params.beta, a.mc_params.gamma) for a in env.agents],
+            [(a.agent_id, a.agent_type) for a in env.agents],
             np.array([obs[i].inflexible_load for i in range(cfg.n_agents)]),
         )
     L0, P0, A0, O0 = snaps[(1.0, 1.0)]
@@ -54,7 +54,7 @@ def check_regime(p: int, c: int) -> bool:
         cons_pv_zero = not P[p:].any()
         log(f"  rejim {r}: tüketici yük oranı {cons_ratio:.6f} | üretici yükü aynı {prod_load_same} "
             f"| üretici PV oranı {pv_ratio:.6f} | tüketici PV=0 {cons_pv_zero} "
-            f"| ajan parametreleri aynı {A == A0} | ilk gözlem ölçekli {np.allclose(O, expL[:, 0] - expP[:, 0])} "
+            f"| ajan kimlik/türleri aynı {A == A0} | ilk gözlem ölçekli {np.allclose(O, expL[:, 0] - expP[:, 0])} "
             f"→ {'OK' if good else 'HATA'}")
         ok &= bool(good)
     return ok

@@ -8,12 +8,12 @@ q_priceK : durum sonuna önceki slotun ortalama takas fiyatı kovası eklenir:
            alanın aynısı), bkz. price_bucket().
 
 obs.last_avg_price NE ZAMAN 0?  (src/market.py, src/environment.py)
-  * Günün ilk slotu: reset() her gün yeni bir PartialMatchDoubleAuction kurar
-    (environment.py:111); clearing_results boş olduğundan get_market_info()
-    last_avg_price = 0.0 döndürür (market.py:276).
-  * Önceki slotta hiç takas olmadıysa: ClearingResult.compute_stats()
-    average_price = 0.0 yazar (market.py:101-103) ve bu değer bir sonraki
-    gözleme aynen geçer (market.py:280, environment.py:139).
+  * Günün ilk slotu: EnergyTradingEnv.reset() her gün yeni bir
+    PartialMatchDoubleAuction kurar; clearing_results boş olduğundan
+    get_market_info() last_avg_price = 0.0 döndürür.
+  * Önceki slotta hiç takas olmadıysa: PartialClearingResult.compute_stats()
+    average_price = 0.0 yazar ve bu değer bir sonraki gözleme aynen geçer
+    (EnergyTradingEnv._get_all_observations).
   Takas olduğunda değer hacim ağırlıklı ortalama orta-nokta fiyatıdır; tüm
   öğrenen emirleri [FiT, ToU] aralığında olduğundan pratikte bu aralıktadır
   (yine de kenar kovalara kırpılır).
@@ -98,18 +98,12 @@ def _agent_type(i: int, config: SimConfig) -> str:
     return "producer" if i < config.n_producers else "consumer"
 
 
-def _base_params(i: int, config: SimConfig):
-    if i < config.n_producers:
-        return config.producer_mb, config.producer_mc
-    return config.consumer_mb, config.consumer_mc
-
-
 class AblationQLEnv(QLearningEnv):
     """QLearningEnv + varyant ajanları.
 
     Ajanlar kurulumda (id sırasıyla) önceden oluşturulur; src'nin reset()'i onları
-    "mevcut ajan" dalından geçirip mb/mc parametrelerini her gün (ilk gün dahil)
-    yeniler — yani src ile aynı yol. QLearningAgent kurulumu RNG kullanmaz.
+    her gün (ilk gün dahil) "mevcut ajan" dalından geçirir — yani src ile aynı yol.
+    QLearningAgent kurulumu RNG kullanmaz.
     price_buckets = 0 → src QLearningAgent'ın kendisi (q_base).
     """
 
@@ -118,9 +112,8 @@ class AblationQLEnv(QLearningEnv):
         self.price_buckets = int(price_buckets)
         self._eval_visit_snapshot: Optional[np.ndarray] = None
         for i in range(config.n_agents):
-            mb, mc = _base_params(i, config)
-            common = dict(agent_id=i, agent_type=_agent_type(i, config), mb_params=mb,
-                          mc_params=mc, config=config, alpha_lr=self.ql_alpha_lr,
+            common = dict(agent_id=i, agent_type=_agent_type(i, config),
+                          config=config, alpha_lr=self.ql_alpha_lr,
                           gamma=self.ql_gamma, epsilon=self.ql_epsilon,
                           epsilon_min=self.ql_epsilon_min, epsilon_decay=self.ql_epsilon_decay)
             if self.price_buckets:

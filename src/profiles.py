@@ -1,16 +1,13 @@
 """
-Synthetic energy profiles for producers and consumers.
+Sentetik günlük enerji profilleri (üreticiler ve tüketiciler), 48 yarım saatlik slot.
 
-Generates daily PV generation and load demand profiles inspired by the
-Australian Ausgrid dataset used in Qiu et al. (IJCAI-21).
-
-PV Generation: Gaussian bell curve peaking at solar noon (hours 10-14).
-Load Demand: Double-peaked profile (morning 7-9, evening 17-20).
-Initial Battery: Truncated normal distribution around mid-SoC.
+PV üretimi : öğlen civarında tepe yapan Gauss eğrisi + gürültü; 06:00–19:00
+             dışında sıfır. Yalnızca üreticilerin PV'si vardır.
+Yük talebi : sabah, öğle ve akşam tepeli profil + gürültü.
+Rastgelelik: gün seed'iyle kurulan tek bir np.random.Generator (ProfileManager.rng).
 """
 
 import numpy as np
-from typing import List, Tuple
 
 
 def _gaussian(x: np.ndarray, mu: float, sigma: float, amplitude: float) -> np.ndarray:

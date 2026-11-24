@@ -17,7 +17,7 @@ mekanizmanın gerçekten kullanıldığı konusunda karışıklık yaratıyorlar
 """
 
 from dataclasses import dataclass, field
-from typing import List, Tuple, Optional
+from typing import List
 
 
 @dataclass
@@ -27,8 +27,6 @@ class Order:
     price: float        # $/kWh willingness price
     quantity: float     # kWh (positive for both buy and sell)
     is_buy: bool        # True = buy order, False = sell order
-    is_emergency: bool = False  # Emergency bid from starvation mechanism
-    use_flat_price: bool = False  # True → tek toplu emir, MB eğrisi uygulanmaz
 
 
 # ============================================================
@@ -58,15 +56,6 @@ class PendingOrder:
     @property
     def is_buy(self) -> bool:
         return self.order.is_buy
-
-    @property
-    def mb_value(self) -> float:
-        """Marginal-benefit / ask price used for sorting.
-
-        For buyers  this is the bid price (proxy for MB at the submitted qty).
-        For sellers this is the ask price (proxy for MC at the submitted qty).
-        """
-        return self.order.price
 
 
 @dataclass
@@ -108,7 +97,7 @@ class PartialMatchDoubleAuction:
 
     Rules implemented:
     1. Sellers enter a fixed-quantity sell offer.
-    2. Buyers are sorted by marginal benefit (bid price descending).
+    2. Buyers are sorted by bid price (descending).
     3. Each seller's quantity is distributed across sorted buyers.
     4. Any unmatched quantity (buy or sell) is DISCARDED at the end of the period.
     5. Buyers whose demand is not fully met by the current best seller are
@@ -130,7 +119,6 @@ class PartialMatchDoubleAuction:
 
         # Historical records
         self.clearing_results: List[PartialClearingResult] = []
-        self.all_trades: List[PartialTrade] = []   # Flat list of every trade ever
 
         self._period: int = 0   # Current clearing period counter
 
@@ -160,8 +148,8 @@ class PartialMatchDoubleAuction:
         """Match current order books and return the clearing result.
 
         Algorithm:
-        1. Sort buyers: descending bid price (MB proxy), ties → descending qty.
-        2. Sort sellers: ascending ask price (MC proxy).
+        1. Sort buyers: descending bid price, ties → descending qty.
+        2. Sort sellers: ascending ask price.
         3. For each seller (cheapest first):
            a. Walk through sorted buyers.
            b. If buyer.bid >= seller.ask → trade at mid-price for min(remaining) qty.
@@ -232,7 +220,6 @@ class PartialMatchDoubleAuction:
                 period=self._period,
             )
             result.trades.append(trade)
-            self.all_trades.append(trade)
             
             buyer.remaining_quantity -= trade_qty
             seller.remaining_quantity -= trade_qty
@@ -256,54 +243,13 @@ class PartialMatchDoubleAuction:
 
         return result
 
-    def reset(self):
-        """Clear order books and reset period counter (daily reset)."""
-        self._buy_book = []
-        self._sell_book = []
-        self.clearing_results = []
-        self.all_trades = []
-        self._period = 0
-
-    def get_pending_orders(self) -> Tuple[List[PendingOrder], List[PendingOrder]]:
-        """Return (buy_book, sell_book) — orders still waiting to be matched."""
-        return list(self._buy_book), list(self._sell_book)
-
     def get_market_info(self) -> dict:
-        """Public market snapshot for agent observations."""
-        best_bid = max((o.price for o in self._buy_book), default=0.0)
-        best_ask = min((o.price for o in self._sell_book), default=float("inf"))
+        """Public market snapshot for agent observations.
 
-        last_avg_price = 0.0
-        last_volume = 0.0
-        if self.clearing_results:
-            last = self.clearing_results[-1]
-            last_avg_price = last.average_price
-            last_volume = last.total_traded_kwh
-
-        return {
-            "best_bid": best_bid,
-            "best_ask": best_ask if best_ask != float("inf") else 0.0,
-            "last_avg_price": last_avg_price,
-            "last_volume": last_volume,
-            "n_periods_completed": len(self.clearing_results),
-        }
-
-    def get_agent_trades(
-        self, agent_id: int, period: Optional[int] = None
-    ) -> List[PartialTrade]:
-        """Retrieve trades for a specific agent.
-
-        If ``period`` is None, return all historical trades.
-        If ``period`` is an integer index (may be negative), filter by that period.
+        Ajan gözlemi yalnızca önceki periyodun takas fiyatını kullanır (Eq. 6);
+        takas yoksa / günün ilk periyodunda 0.0.
         """
-        if period is None:
-            source = self.all_trades
-        else:
-            if not self.clearing_results:
-                return []
-            source = self.clearing_results[period].trades
-
-        return [
-            t for t in source
-            if t.buyer_id == agent_id or t.seller_id == agent_id
-        ]
+        last_avg_price = 0.0
+        if self.clearing_results:
+            last_avg_price = self.clearing_results[-1].average_price
+        return {"last_avg_price": last_avg_price}

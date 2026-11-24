@@ -27,7 +27,7 @@ hangi yöntemlerin koştuğuna bağlı değildir. Toplam 47 iş.
 ```bash
 git clone https://github.com/efeylm/energy-trading.git
 cd energy-trading
-git checkout revize          # zaten klonluysa: git fetch && git checkout revize && git pull
+git checkout jeps-final      # zaten klonluysa: git fetch && git checkout jeps-final && git pull
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -96,5 +96,5 @@ python -m src.summarize_experiments results
 git add results/*.json results/summary.txt results/summary.csv results/*.png
 git add -f results/logs/*.log        # isteğe bağlı: .gitignore *.log'u yok sayıyor
 git commit -m "Ek deney sonuçları (A, B, C)"
-git push origin revize
+git push origin jeps-final
 ```

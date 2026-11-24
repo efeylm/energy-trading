@@ -26,8 +26,8 @@ import numpy as np
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# src/agent.py MB eğrisi dosyalarını GÖRELİ yoldan ("src/data/...") okur; bu yüzden
-# her giriş noktası çalışma dizinini repo köküne sabitler.
+# Her giriş noktası çalışma dizinini repo köküne sabitler (göreli yollar ve `src`
+# paketinin içe aktarımı için).
 def chdir_repo_root() -> None:
     os.chdir(REPO_ROOT)
     if REPO_ROOT not in sys.path:
@@ -303,16 +303,10 @@ def _agent_type(i: int, config: SimConfig) -> str:
     return "producer" if i < config.n_producers else "consumer"
 
 
-def _base_params(i: int, config: SimConfig):
-    if i < config.n_producers:
-        return config.producer_mb, config.producer_mc
-    return config.consumer_mb, config.consumer_mc
-
-
 class ShockQLEnv(RegimeMixin, QLearningEnv):
     """QLearningEnv + rejim. Ajanlar kurulumda (tüm id'ler için, sırayla) oluşturulur;
-    src'nin reset()'i onları "mevcut ajan" dalından geçirip mb/mc parametrelerini her
-    gün yeniler — yani src ile aynı yol. QLearningAgent kurulumu RNG kullanmaz.
+    src'nin reset()'i onları her gün "mevcut ajan" dalından geçirir — yani src ile
+    aynı yol. QLearningAgent kurulumu RNG kullanmaz.
     """
 
     def __init__(self, config: SimConfig, features: Sequence[str] = (),
@@ -321,9 +315,8 @@ class ShockQLEnv(RegimeMixin, QLearningEnv):
                  **ql_kwargs):
         super().__init__(config, **ql_kwargs)
         for i in range(config.n_agents):
-            mb, mc = _base_params(i, config)
-            common = dict(agent_id=i, agent_type=_agent_type(i, config), mb_params=mb,
-                          mc_params=mc, config=config, alpha_lr=self.ql_alpha_lr,
+            common = dict(agent_id=i, agent_type=_agent_type(i, config),
+                          config=config, alpha_lr=self.ql_alpha_lr,
                           gamma=self.ql_gamma, epsilon=self.ql_epsilon,
                           epsilon_min=self.ql_epsilon_min, epsilon_decay=self.ql_epsilon_decay)
             if features:

@@ -15,14 +15,14 @@ Miras zinciri:
 
 Dokunulmayan dosyalar:
   environment.py, agent.py, market.py, metrics.py,
-  baseline_agent.py, ql_agent.py, ql_environment.py
+  ql_agent.py, ql_environment.py
 """
 
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
-from src.config import SimConfig, AgentMBParams, AgentMCParams
+from src.config import SimConfig
 from src.environment import EnergyTradingEnv
 from src.metrics import MetricsCollector
 from src.reinforce_agent import REINFORCEAgent
@@ -88,15 +88,12 @@ class REINFORCEEnv(EnergyTradingEnv):
                 # ── Mevcut ajan: NN ağırlıklarını KORU ───────────────
                 existing = self._rf_agents[aid]
 
-                # Ortam parametrelerini yenile (±15% varyasyon güncellemesi)
+                # Ortam parametrelerini yenile
                 existing.agent_type = agent.agent_type
-                existing.mb_params  = agent.mb_params
-                existing.mc_params  = agent.mc_params
                 existing.config     = self.config
 
                 # EnergyAgent sayaçlarını sıfırla
                 existing.total_cost       = 0.0
-                existing.total_reward     = 0.0
                 existing.total_traded_kwh = 0.0
                 existing.unmet_demand     = 0.0
                 existing.curtailed_energy = 0.0
@@ -122,8 +119,6 @@ class REINFORCEEnv(EnergyTradingEnv):
                 rf_agent = REINFORCEAgent(
                     agent_id=aid,
                     agent_type=agent.agent_type,
-                    mb_params=agent.mb_params,
-                    mc_params=agent.mc_params,
                     config=self.config,
                     lr=self.nn_lr,
                     gamma=self.nn_gamma,

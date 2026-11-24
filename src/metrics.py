@@ -2,15 +2,13 @@
 Metrics collector and analysis for the P2P energy trading simulation.
 
 Tracks per-hour and per-agent metrics including:
-- Market clearing prices and volumes
-- Agent energy bills
-- Battery utilization  
-- Starvation / curtailment rates
-- Allocative efficiency
+- Market clearing prices and volumes (P2P)
+- Grid fallback volumes (ToU purchases / FiT sales)
+- Agent energy bills, seller revenue / buyer cost decomposition
 """
 
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
+from dataclasses import dataclass
+from typing import List, Dict
 import numpy as np
 
 
@@ -92,25 +90,9 @@ class MetricsCollector:
         """Array of total traded volumes per hour."""
         return np.array([h.total_traded_kwh for h in self.hourly])
     
-    def get_hourly_unmet(self) -> np.ndarray:
-        """Array of total unmet demand per hour."""
-        return np.array([h.total_unmet_demand for h in self.hourly])
-    
-    def get_hourly_curtailed(self) -> np.ndarray:
-        """Array of total curtailed surplus per hour."""
-        return np.array([h.total_curtailed for h in self.hourly])
-    
     def total_internal_trading(self) -> float:
         """Total kWh traded through P2P market across all hours."""
         return sum(h.total_traded_kwh for h in self.hourly)
-    
-    def total_unmet_demand(self) -> float:
-        """Total kWh of demand that couldn't be satisfied."""
-        return sum(h.total_unmet_demand for h in self.hourly)
-    
-    def total_curtailment(self) -> float:
-        """Total kWh of surplus energy that was curtailed."""
-        return sum(h.total_curtailed for h in self.hourly)
     
     def average_clearing_price(self) -> float:
         """Volume-weighted average clearing price across all hours."""
@@ -165,10 +147,6 @@ class MetricsCollector:
     def total_grid_buy_cost(self, n_producers: int) -> float:
         return sum(self.agent_grid_buy_cost[i] for i in range(n_producers, self.n_agents))
 
-    def get_agent_bills(self) -> Dict[int, float]:
-        """Get final energy bills for all agents."""
-        return dict(self.agent_total_cost)
-    
     def summary(self) -> str:
         """Generate a text summary of the simulation results."""
         grid_p = self.total_grid_purchased()

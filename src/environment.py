@@ -7,9 +7,9 @@ Qiu et al. (IJCAI-21) Section 3.3:
     POMG = (N, S, {O_n}, {A_n}, T, {R_n})
 
 - N agents (producers + consumers) with pre-determined daily profiles
-- Each hour is one auction period with batch clearing
-- No grid connection: unmatched energy is curtailed (starvation possible)
-- Emergency bidding for agents near starvation threshold
+- Each half-hour slot is one auction period with batch clearing
+- Grid fallback (config.grid_fallback, varsayılan): P2P'de eşleşmeyen alıcı
+  şebekeden ToU'dan alır, eşleşmeyen satıcı şebekeye FiT'ten satar
 
 The environment orchestrates:
 1. Profile-based generation/consumption per hour
@@ -21,15 +21,12 @@ The environment orchestrates:
 """
 
 from typing import List, Dict, Tuple, Optional
-import math
 # pyrefly: ignore [missing-import]
 import numpy as np
 
 from src.config import SimConfig
 from src.agent import EnergyAgent, Observation, Action
-from src.market import (
-    Order, PartialMatchDoubleAuction, PartialClearingResult, PartialTrade,
-)
+from src.market import Order, PartialMatchDoubleAuction, PartialClearingResult
 from src.profiles import ProfileManager
 from src.metrics import MetricsCollector, HourlyMetrics
 
@@ -37,19 +34,19 @@ from src.metrics import MetricsCollector, HourlyMetrics
 class EnergyTradingEnv:
     """POMG environment for P2P energy trading simulation.
     
-    Runs a 24-hour simulation day where agents trade energy
-    through a batch double auction market.
+    Runs a 24-hour simulation day (48 half-hour slots) where agents trade
+    energy through a batch double auction market. Ajanlar reset()'te taban
+    EnergyAgent olarak kurulur; alt sınıflar (RandomBaselineEnv, QLearningEnv,
+    REINFORCEEnv) onları kendi ajanlarıyla değiştirir.
     """
     
     def __init__(self, config: SimConfig):
         self.config = config
-        self.market = PartialMatchDoubleAuction()  # Partial-match DA with order persistence
+        self.market = PartialMatchDoubleAuction()
         self.metrics = MetricsCollector(config.n_agents)
         self.profiles: Optional[ProfileManager] = None
         self.agents: List[EnergyAgent] = []
         self.current_hour = 0
-        # Per-hour order log: list of {agent_id: Order} dicts (one entry per hour)
-        self.bid_ask_log: List[Dict] = []
         
     def reset(self, seed: Optional[int] = None) -> Dict:
         """Initialize/reset the environment for a new simulation day.
@@ -72,37 +69,13 @@ class EnergyTradingEnv:
             supply_multiplier=getattr(self.config, "supply_multiplier", 1.0),
         )
         
-        # Random number generator for parameter variation
-        rng = np.random.default_rng(actual_seed + 1)
-        
         # Create agents
         self.agents = []
         for i in range(self.config.n_agents):
-            if i < self.config.n_producers:
-                agent_type = "producer"   # PV owner, sell-only (no buy orders)
-                base_mb = self.config.producer_mb
-                base_mc = self.config.producer_mc
-            else:
-                agent_type = "consumer"
-                base_mb = self.config.consumer_mb
-                base_mc = self.config.consumer_mc
-            
-            # Add ±15% variation so same-type agents don't have identical curves
-            from src.config import AgentMBParams, AgentMCParams
-            mb_params = AgentMBParams(
-                alpha=base_mb.alpha * rng.uniform(0.85, 1.15),
-                beta=base_mb.beta * rng.uniform(0.85, 1.15)
-            )
-            mc_params = AgentMCParams(
-                gamma=base_mc.gamma * rng.uniform(0.85, 1.15),
-                delta=base_mc.delta * rng.uniform(0.85, 1.15)
-            )
-            
+            agent_type = "producer" if i < self.config.n_producers else "consumer"
             agent = EnergyAgent(
                 agent_id=i,
                 agent_type=agent_type,
-                mb_params=mb_params,
-                mc_params=mc_params,
                 config=self.config,
             )
             self.agents.append(agent)
@@ -111,7 +84,6 @@ class EnergyTradingEnv:
         self.market = PartialMatchDoubleAuction()
         self.metrics = MetricsCollector(self.config.n_agents)
         self.current_hour = 0
-        self.bid_ask_log = []
 
         # Print profile summary
         print(self.profiles.summary())
@@ -150,7 +122,7 @@ class EnergyTradingEnv:
         1. Generate observations for all agents
         2. Each agent decides action (market order)
         3. Submit orders to PartialMatchDoubleAuction
-        4. Clear the market (partial matching, unmatched orders persist)
+        4. Clear the market (partial matching; unmatched remainder → grid)
         5. Settle trades and handle unmatched orders
         6. Compute rewards and metrics
 
@@ -169,31 +141,16 @@ class EnergyTradingEnv:
             action = agent.decide_action(obs)
             actions[agent.agent_id] = action
 
-        # --- Step 3: Submit unit-by-unit orders priced by MB/MC curves ---
-        # ─────────────────────────────────────────────────────────────────
-        # Each agent's total market quantity is split into chunks of
-        # unit_size kWh.  Every chunk gets its own price:
-        #
-        #   Buyers  → price_k = MB(k * unit_size)   (decreasing in k)
-        #   Sellers → price_k = MC(k * unit_size)   (increasing in k)
-        #
-        # The market collects all unit orders from ALL agents, sorts
-        # buyers descending and sellers ascending, then matches them
-        # one unit at a time.  This mirrors a proper Walrasian auction
-        # where each unit's value is evaluated independently.
-        # ─────────────────────────────────────────────────────────────────
+        # --- Step 3: Submit orders ---
+        # Her ajan slot başına TEK toplu emir verir (fiyat ajanın stratejisinden:
+        # Random / QL / NN). Alıcı fiyatı [0.001, 2.0] aralığına kırpılır.
         n_buyers = 0
         n_sellers = 0
         agent_requested: Dict[int, Order] = {}  # original order per agent
-        hour_bid_ask: Dict[int, list] = {}       # unit orders per agent (for plotting)
 
         # Flush stale pending orders from the previous hour.
         self.market._buy_book = []
         self.market._sell_book = []
-
-        unit_size = self.config.unit_size
-
-        flat_sellers = []   # for logging
 
         for agent in self.agents:
             order = actions[agent.agent_id].order
@@ -203,88 +160,25 @@ class EnergyTradingEnv:
             agent_requested[agent.agent_id] = order  # store for unmet tracking
             if order.is_buy:
                 n_buyers += 1
+                self.market.submit_order(Order(
+                    agent_id=agent.agent_id,
+                    price=float(np.clip(order.price, 0.001, 2.0)),
+                    quantity=order.quantity,
+                    is_buy=True,
+                ))
             else:
                 n_sellers += 1
-
-            # Split into unit orders, each priced by the MB curve at cumulative qty
-            n_units = max(1, math.ceil(order.quantity / unit_size))
-
-            unit_orders = []
-
-            # ── Order submission ─────────────────────────────────────────────
-            # We calculate a 'multiplier' to shift the agent's base curve 
-            # by their strategic decision (from Q-Learning or Baseline).
-            # This preserves the 'unit-by-unit' architecture while making
-            # actions effective in the market.
-            
-            if order.is_buy:
-                if order.use_flat_price:
-                    # QL / NN alıcı: öğrenilmiş tek sabit fiyat — MB eğrisi uygulanmaz.
-                    # Ajan gerçekten ne kadar ödemek istediğini söylüyor.
-                    agg_buy = Order(
-                        agent_id=agent.agent_id,
-                        price=float(np.clip(order.price, 0.001, 2.0)),
-                        quantity=order.quantity,
-                        is_buy=True,
-                        is_emergency=order.is_emergency,
-                        use_flat_price=True,
-                    )
-                    self.market.submit_order(agg_buy)
-                    unit_orders.append(agg_buy)
-                else:
-                    # Baseline heuristic: MB eğrisi × multiplier ile ünite bazlı emir.
-                    # Tavan: ToU — grid fallback varken alıcı asla ToU'dan fazla ödemez.
-                    tou_cap = self.config.tou_price
-                    base_price = agent.compute_mb(order.quantity, hour=self.current_hour)
-                    multiplier = order.price / base_price if base_price > 1e-6 else 1.0
-
-                    for k in range(n_units):
-                        cum_qty    = k * unit_size
-                        actual_qty = min(unit_size, order.quantity - cum_qty)
-                        if actual_qty <= 1e-9:
-                            break
-
-                        raw_u_price = agent.compute_mb(cum_qty, hour=self.current_hour)
-                        u_price = float(np.clip(raw_u_price * multiplier, 0.001, tou_cap))
-
-                        ind_order = Order(
-                            agent_id=agent.agent_id,
-                            price=u_price,
-                            quantity=actual_qty,
-                            is_buy=True,
-                            is_emergency=order.is_emergency,
-                        )
-                        self.market.submit_order(ind_order)
-                        unit_orders.append(ind_order)
-            else:
-                # SELLERS: tek toplu emir — ajanın belirlediği fiyat (UILI / QL / NN).
-                agg_order = Order(
+                self.market.submit_order(Order(
                     agent_id=agent.agent_id,
                     price=order.price,
                     quantity=order.quantity,
                     is_buy=False,
-                    is_emergency=order.is_emergency,
-                )
-                self.market.submit_order(agg_order)
-                unit_orders.append(agg_order)
-                flat_sellers.append(f"A{agent.agent_id}({order.quantity:.1f}kWh@${order.price:.4f})")
+                ))
 
-            hour_bid_ask[agent.agent_id] = unit_orders
-
-
-        # Log flat-block pricing this hour
-        if flat_sellers:
-            print(f"    [FLAT-S] Sabit fiyat kullanan satıcılar: {', '.join(flat_sellers)}")
-
-        # Snapshot this hour's unit orders for post-simulation plotting
-        self.bid_ask_log.append(hour_bid_ask)
-
-
-        # --- Step 5: Clear market (PartialMatchDoubleAuction) ---
+        # --- Step 4: Clear market (PartialMatchDoubleAuction) ---
         clearing_result: PartialClearingResult = self.market.clear_period()
 
         # Build pending lookup: agent_id → remaining unmatched quantity
-        # (Buyers submit one order per unit; sum all pending rows per agent.)
         pending_buy_qty: Dict[int, float] = {}
         for po in clearing_result.pending_buy_orders:
             pending_buy_qty[po.agent_id] = (
@@ -304,14 +198,12 @@ class EnergyTradingEnv:
                 f"qty={t.quantity:.3f} kWh @ ${t.price:.4f}/kWh"
             )
 
-        # --- Step 6: Settle trades ---
+        # --- Step 5: Settle trades ---
         rewards = {}
         total_unmet = 0.0
         total_curtailed = 0.0
         total_grid_purchased = 0.0
         total_grid_sold = 0.0
-        n_starvation = 0
-        agent_battery_soc = {}
 
         for agent in self.agents:
             agent_id = agent.agent_id
@@ -327,10 +219,9 @@ class EnergyTradingEnv:
             bought_kwh = sum(t.quantity for t in trades_as_buyer)
             sold_kwh   = sum(t.quantity for t in trades_as_seller)
 
-            # Unmet demand  = quantity this hour that is still pending in the buy book
-            # Curtailed     = quantity this hour that is still pending in the sell book
-            # (Unmatched orders remain in the book for future periods, but we
-            #  charge the cost this hour so the agent receives the signal.)
+            # Unmet demand  = quantity this hour left unmatched in the buy book
+            # Curtailed     = quantity this hour left unmatched in the sell book
+            # (Defterler her periyot sonunda boşaltılır; artık grid fallback'e gider.)
             unmet_demand      = 0.0
             curtailed_surplus = 0.0
 
@@ -340,9 +231,6 @@ class EnergyTradingEnv:
                     unmet_demand = pending_buy_qty.get(agent_id, 0.0)
                 else:
                     curtailed_surplus = pending_sell_qty.get(agent_id, 0.0)
-
-            if unmet_demand > 0.01:
-                n_starvation += 1
 
             # --- Grid fallback ---
             # P2P'de eşleşemeyen alıcı → grid'den ToU fiyatıyla alır
@@ -395,7 +283,7 @@ class EnergyTradingEnv:
                 grid_buy_cost=grid_buy_cost,
             )
 
-        # --- Step 7: Record hourly metrics ---
+        # --- Step 6: Record hourly metrics ---
         hourly = HourlyMetrics(
             hour=hour,
             average_price=clearing_result.average_price,
@@ -422,32 +310,9 @@ class EnergyTradingEnv:
             "clearing_result": clearing_result,
             "total_unmet_demand": total_unmet,
             "total_curtailed": total_curtailed,
-            "n_starvation_events": n_starvation,
         }
 
         return next_obs, rewards, done, info
-    
-    def run_day(self) -> MetricsCollector:
-        """Run a complete 24-hour simulation day.
-        
-        Returns:
-            MetricsCollector with all recorded data.
-        """
-        self.reset()
-        
-        print("=" * 60)
-        print("  Starting 24-hour P2P Energy Trading Simulation")
-        print("=" * 60)
-        print()
-        
-        done = False
-        while not done:
-            _, _, done, _ = self.step()
-        
-        print()
-        print(self.metrics.summary())
-        
-        return self.metrics
     
     def _print_hour_summary(
         self,

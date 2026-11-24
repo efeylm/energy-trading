@@ -29,7 +29,7 @@ from src.config import SimConfig
 from src.reinforce_agent import REINFORCEAgent
 from src.reinforce_environment import REINFORCEEnv
 
-from ablation.q_agents import _agent_type, _base_params
+from ablation.q_agents import _agent_type
 
 
 class StatePolicyNet(nn.Module):
@@ -83,9 +83,9 @@ class AblationNNEnv(REINFORCEEnv):
 
     Ajanlar kurulumda id sırasıyla önceden oluşturulur. src'de ajanlar ilk reset()'te
     aynı sırayla oluşturulur ve arada torch RNG'sini kullanan başka bir şey yoktur
-    (ProfileManager / parametre varyasyonu numpy Generator kullanır); bu yüzden ağ
-    başlangıç ağırlıkları src ile aynıdır. reset()'in "mevcut ajan" dalı mb/mc
-    parametrelerini ilk gün dahil her gün yeniler. state_dim=None → src REINFORCEAgent
+    (ProfileManager numpy Generator kullanır); bu yüzden ağ başlangıç ağırlıkları
+    src ile aynıdır. reset() ajanları ilk gün dahil her gün "mevcut ajan" dalından
+    geçirir. state_dim=None → src REINFORCEAgent
     (nn_full). selfcheck bu yolun src run_nn ile bit düzeyinde aynı olduğunu doğrular.
     """
 
@@ -93,9 +93,8 @@ class AblationNNEnv(REINFORCEEnv):
         super().__init__(config, **nn_kwargs)
         self.variant_state_dim = state_dim
         for i in range(config.n_agents):
-            mb, mc = _base_params(i, config)
             common = dict(
-                agent_id=i, agent_type=_agent_type(i, config), mb_params=mb, mc_params=mc,
+                agent_id=i, agent_type=_agent_type(i, config),
                 config=config, lr=self.nn_lr, gamma=self.nn_gamma, sigma=self.nn_sigma,
                 sigma_min=self.nn_sigma_min, sigma_decay=self.nn_sigma_decay,
                 hidden=self.nn_hidden, seq_len=self.nn_seq_len, d_model=self.nn_d_model,

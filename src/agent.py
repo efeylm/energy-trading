@@ -1,15 +1,16 @@
 """
-Energy agents: Producers and Consumers.
+Enerji ajanları için ortak taban sınıf: EnergyAgent.
 
-Combines:
-- Qiu et al. POMG observation/action structure (Section 3.3)
-- ADD Bitirme MB/MC curve-based pricing logic (Section 3.1.2)
+Qiu et al. POMG gözlem/aksiyon yapısı (Section 3.3):
+1. Gözlem : net (inflexible) yük, önceki periyodun takas fiyatı, saat
+2. Karar  : piyasa emri (fiyat, miktar) — rol net enerji pozisyonuna göre (Eq. 1)
+3. Sonuç  : takas / grid fallback muhasebesi ve ödül (process_trade_results,
+            get_reward)
 
-Each agent:
-1. Observes: inflexible load, battery state, market signals, hour
-2. Decides: battery action (charge/discharge/store) + market order (price, quantity)
-3. Uses MB/MC curves to determine willingness to pay / minimum ask
-4. Has emergency bidding when battery drops below starvation threshold
+Fiyatlama stratejisi (decide_action) alt sınıflardadır:
+    RandomAgent     (src/random_agent.py)    — rastgele (zero-intelligence) baseline
+    QLearningAgent  (src/ql_agent.py)        — tabular Q-Learning
+    REINFORCEAgent  (src/reinforce_agent.py) — REINFORCE politika ağı
 
 Faz 2 Reward (satıcı için):
     reward = matched_qty × clearing_price + unmatched_qty × FiT
@@ -18,18 +19,10 @@ Faz 2 Reward (alıcı için):
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
-import math
-import os
-import json
+from typing import Optional
 
-from src.config import AgentMBParams, AgentMCParams, SimConfig
+from src.config import SimConfig
 from src.market import Order
-
-
-# MB eğrisi türetilirken Q_max için güvenlik tabanı (kWh).
-# src/extract_mb.py içindeki Q_MAX_FLOOR ile aynı değer olmalıdır.
-MB_Q_MAX_FLOOR = 0.1
 
 
 @dataclass
@@ -68,147 +61,22 @@ class EnergyAgent:
         self,
         agent_id: int,
         agent_type: str,       # "producer" or "consumer"
-        mb_params: AgentMBParams,
-        mc_params: AgentMCParams,
         config: SimConfig,
     ):
         self.agent_id = agent_id
         self.agent_type = agent_type
-        self.mb_params = mb_params
-        self.mc_params = mc_params
         self.config = config
         
         # Tracking
         self.total_cost = 0.0           # Cumulative energy cost ($)
-        self.total_reward = 0.0         # Cumulative reward
         self.total_traded_kwh = 0.0     # Cumulative traded energy
         self.unmet_demand = 0.0         # Cumulative unmet demand (kWh)
         self.curtailed_energy = 0.0     # Cumulative curtailed surplus (kWh)
         self.hourly_log = []            # Detailed per-hour records
-        
-        # --- Hourly MB Data (from Ausgrid extraction) ---
-        self.hourly_mb_data = {}
-        # Try agent-specific data first, then global config path
-        specific_path = f"src/data/mb_agent_{agent_id}.json"
-        path_to_load = specific_path if os.path.exists(specific_path) else self.config.mb_data_path
 
-        if os.path.exists(path_to_load):
-            try:
-                with open(path_to_load, 'r') as f:
-                    raw_mb_data = json.load(f)
-                self.hourly_mb_data = self._rebuild_mb_curves(raw_mb_data)
-            except Exception as e:
-                print(f"Warning: Could not load MB data for agent {agent_id}: {e}")
-
-        self._current_hour: int = 0
-    
-    def _rebuild_mb_curves(self, raw_mb_data: dict) -> dict:
-        """Ausgrid JSON'undan MB eğrilerini config tarifelerine göre yeniden kurar.
-
-        Tek kaynak ilkesi: MB eğrisinin tavanı ToU, tabanı FiT'tir ve her ikisi de
-        SADECE src/config.py'den gelir. JSON dosyasında saklanan alpha/beta değerleri
-        bilgilendirme amaçlıdır; burada Ausgrid'den gelen tek gerçek veri olan
-        Q_max kullanılarak eğri baştan türetilir:
-
-            alpha = ToU                                (q = 0'da ödeme isteği tavanı)
-            beta  = -ln(FiT / ToU) / max(Q_MIN, Q_max) (q = Q_max'ta taban FiT'e iner)
-
-        Böylece config'de FiT/ToU değiştiğinde JSON'ları yeniden üretmeye gerek kalmaz.
-        Q_max bulunmayan (eski format) kayıtlarda JSON'daki alpha/beta aynen korunur.
-        """
-        tou = self.config.tou_price
-        fit = self.config.fit_price
-        beta_scale = -math.log(fit / tou)
-
-        rebuilt = {}
-        for time_key, params in raw_mb_data.items():
-            q_max = params.get("Q_max")
-            if q_max is None:
-                rebuilt[time_key] = params
-                continue
-            safe_q_max = max(MB_Q_MAX_FLOOR, float(q_max))
-            rebuilt[time_key] = {
-                "alpha": tou,
-                "beta": beta_scale / safe_q_max,
-                "Q_max": float(q_max),
-            }
-        return rebuilt
-
-    def compute_mb(self, quantity: float, hour: Optional[int] = None) -> float:
-        """Marginal Benefit: MB(q) = alpha * exp(-beta * q) (Exponential)"""
-        q = max(0.0, quantity)
-        if hour is not None:
-            total_minutes = int((hour + 1) * 30)
-            h = (total_minutes // 60) % 24
-            m = total_minutes % 60
-            time_key = f"{h}:{m:02d}"
-            if time_key in self.hourly_mb_data:
-                params = self.hourly_mb_data[time_key]
-                alpha = params.get("alpha", self.mb_params.alpha)
-                beta = params.get("beta", self.mb_params.beta)
-                return alpha * math.exp(-beta * q)
-        return self.mb_params.alpha * math.exp(-self.mb_params.beta * q)
-    
-    def compute_mc(self, quantity: float) -> float:
-        """Marginal Cost: MC(q) = gamma * q + delta"""
-        q = max(0.0, quantity)
-        return self.mc_params.gamma * q + self.mc_params.delta
-
-    def compute_uili_price(self, quantity: float) -> float:
-        """Use-It-or-Lose-It (UILI) seller pricing.
-
-        Ters exponential fiyat modeli — üretim miktarıyla fiyat düşer:
-
-            P(Q) = FiT + (ToU - FiT) * exp(-lambda * Q)
-
-        - Q = 0  → P = ToU  (hiç üretim baskısı yok, maksimum fiyat)
-        - Q → ∞  → P → FiT  (yüksek üretim baskısı, taban fiyata yaklaşır)
-
-        Satıcı çok ürettiğinde fiyatını düşürmek zorunda kalır;
-        aksi hâlde eşleşemeyip FiT'ten bile daha az kazanır.
-        """
-        q = max(0.0, quantity)
-        # Tüm parametreler DOĞRUDAN config'den okunur.
-        # (Eskiden getattr(..., 0.4) şeklinde bir yedek varsayılan vardı; config'deki
-        #  gerçek varsayılan 0.15 olduğu için yanıltıcıydı — kaldırıldı.)
-        fit = self.config.fit_price
-        tou = self.config.tou_price
-        lam = self.config.lambda_uili
-        return fit + (tou - fit) * math.exp(-lam * q)
-    
     def decide_action(self, obs: Observation) -> Action:
-        """Heuristic decision-making based on net energy position."""
-        self._current_hour = obs.hour
-        market_quantity = obs.inflexible_load  # positive=deficit, negative=surplus
-        
-        order = None
-        if market_quantity > 0.01:
-            # ALICI — makale Bölüm 3.3: rol yalnızca net enerji pozisyonuna bağlıdır
-            # (Eq. 1). Üretici de gece/akşam net açık verdiğinde alıcı olabilir;
-            # eskiden buradaki `agent_type != "producer"` kısıtı üreticinin alıcı
-            # olmasını engelliyordu ve makaleyle çelişiyordu — kaldırıldı.
-            bid_price = self.compute_mb(market_quantity, hour=self._current_hour)
-            order = Order(
-                agent_id=self.agent_id,
-                price=bid_price,
-                quantity=market_quantity,
-                is_buy=True,
-                is_emergency=False,
-            )
-        elif market_quantity < -0.01:
-            # SELLER - Agent has surplus → Use-It-or-Lose-It pricing
-            # Fiyat üretim miktarıyla ters orantılı: çok üretim → ucuz fiyat
-            sell_quantity = abs(market_quantity)
-            ask_price = self.compute_uili_price(sell_quantity)
-            order = Order(
-                agent_id=self.agent_id,
-                price=ask_price,
-                quantity=sell_quantity,
-                is_buy=False,
-                is_emergency=False,
-            )
-
-        return Action(order=order)
+        """Fiyatlama stratejisi — alt sınıflar (Random / QL / REINFORCE) uygular."""
+        raise NotImplementedError
 
     def process_trade_results(
         self,

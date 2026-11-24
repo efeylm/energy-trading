@@ -10,22 +10,17 @@ Her adımdan sonra:
 Her episode sonunda:
   agent.end_episode()   → ε decay
 
-Baseline karşılaştırması için BaselineEnv da bu dosyadadır;
-aynı profilleri, aynı market parametrelerini kullanır,
-sadece ajanları BaselineAgent olarak oluşturur.
+Rastgele baseline ortamı src/random_environment.py'dedir (RandomBaselineEnv).
 """
 
 from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
-import numpy as np
 
-from src.config import SimConfig, AgentMBParams, AgentMCParams
+from src.config import SimConfig
 from src.environment import EnergyTradingEnv
 from src.metrics import MetricsCollector
 from src.ql_agent import QLearningAgent
-from src.baseline_agent import BaselineAgent
-from src.agent import Observation
 
 
 class QLearningEnv(EnergyTradingEnv):
@@ -70,19 +65,15 @@ class QLearningEnv(EnergyTradingEnv):
             aid = agent.agent_id
 
             if aid in self._ql_agents:
-                # Mevcut Q-ajan: Öğrenilen Q-tabloyu KORU, ama ortam parametrelerini yenile.
-                # Bu, her episode'da değişen ±%15'lik varyasyonun Q-ajana da yansımasını sağlar.
+                # Mevcut Q-ajan: Öğrenilen Q-tabloyu KORU, gün sayaçlarını sıfırla.
                 existing = self._ql_agents[aid]
                 
                 # Karakteristikleri yenile
                 existing.agent_type = agent.agent_type
-                existing.mb_params  = agent.mb_params
-                existing.mc_params  = agent.mc_params
                 existing.config     = self.config
                 
                 # Sayaçları sıfırla
                 existing.total_cost       = 0.0
-                existing.total_reward     = 0.0
                 existing.total_traded_kwh = 0.0
                 existing.unmet_demand     = 0.0
                 existing.curtailed_energy = 0.0
@@ -99,8 +90,6 @@ class QLearningEnv(EnergyTradingEnv):
                 ql_agent = QLearningAgent(
                     agent_id=aid,
                     agent_type=agent.agent_type,
-                    mb_params=agent.mb_params,
-                    mc_params=agent.mc_params,
                     config=self.config,
                     alpha_lr=self.ql_alpha_lr,
                     gamma=self.ql_gamma,
@@ -218,44 +207,4 @@ class QLearningEnv(EnergyTradingEnv):
                 if isinstance(agent, QLearningAgent):
                     agent.epsilon = saved_epsilons.get(agent.agent_id, 0.0)
 
-        return self.metrics
-
-
-class BaselineEnv(EnergyTradingEnv):
-    """EnergyTradingEnv + BaselineAgent factory."""
-
-    def reset(self, seed: Optional[int] = None) -> Dict:
-        obs = super().reset(seed=seed)
-
-        # Parent EnergyAgent'ları BaselineAgent ile değiştir
-        new_agents = []
-        for agent in self.agents:
-            bl_agent = BaselineAgent(
-                agent_id=agent.agent_id,
-                agent_type=agent.agent_type,
-                mb_params=agent.mb_params,
-                mc_params=agent.mc_params,
-                config=self.config,
-            )
-            new_agents.append(bl_agent)
-        self.agents = new_agents
-        return obs
-
-    def run_baseline(self, seed: Optional[int] = None, verbose: bool = True) -> MetricsCollector:
-        """Baseline ajanlarla tek bir simülasyon günü çalıştır."""
-        run_seed = seed if seed is not None else self.config.seed
-        self.reset(seed=run_seed)
-
-        if verbose:
-            print("\n" + "=" * 60)
-            print("  Baseline (Rule-Based) — Single Run")
-            print("=" * 60)
-
-        done = False
-        while not done:
-            _, _, done, _ = self.step()
-
-        if verbose:
-            print()
-            print(self.metrics.summary())
         return self.metrics

@@ -40,14 +40,14 @@ Mimari:
 from __future__ import annotations
 
 from collections import deque
-from typing import List, Optional
+from typing import List
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from src.config import SimConfig, AgentMBParams, AgentMCParams
+from src.config import SimConfig
 from src.agent import EnergyAgent, Observation, Action
 from src.market import Order
 
@@ -174,7 +174,6 @@ class REINFORCEAgent(EnergyAgent):
     """Zaman serisi + positional embedding tabanlı REINFORCE ajanı — Faz 3.
 
     Miras alınan metodlar (DEĞİŞMEZ):
-        compute_mb(), compute_mc(), compute_uili_price()
         process_trade_results(), get_reward()
 
     Override edilen:
@@ -192,8 +191,6 @@ class REINFORCEAgent(EnergyAgent):
         self,
         agent_id:    int,
         agent_type:  str,
-        mb_params:   AgentMBParams,
-        mc_params:   AgentMCParams,
         config:      SimConfig,
         lr:          float = 5e-4,
         gamma:       float = 0.95,
@@ -205,7 +202,7 @@ class REINFORCEAgent(EnergyAgent):
         d_model:     int   = 16,    # positional embedding boyutu
         n_layers:    int   = 2,     # politika ağının gizli katman sayısı
     ):
-        super().__init__(agent_id, agent_type, mb_params, mc_params, config)
+        super().__init__(agent_id, agent_type, config)
 
         self.lr          = lr
         self.gamma       = gamma
@@ -302,7 +299,6 @@ class REINFORCEAgent(EnergyAgent):
 
     def decide_action(self, obs: Observation) -> Action:
         """History'yi güncelle → PolicyNet(state, history) → aksiyon üret."""
-        self._current_hour = obs.hour
         net = obs.inflexible_load
 
         # Her adımda geçmiş fiyat serisini güncelle
@@ -337,7 +333,6 @@ class REINFORCEAgent(EnergyAgent):
                 price=price,
                 quantity=abs(net),
                 is_buy=False,
-                is_emergency=False,
             )
 
         elif net > 0.01:  # ── ALICI: buy_policy_net ile öğrenen fiyat ──
@@ -367,8 +362,6 @@ class REINFORCEAgent(EnergyAgent):
                 price=bid_price,
                 quantity=net,
                 is_buy=True,
-                is_emergency=False,
-                use_flat_price=True,
             )
 
         else:

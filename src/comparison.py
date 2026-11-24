@@ -1,20 +1,19 @@
 """
-Q-Learning vs Baseline Karşılaştırma Modülü
+3-yol karşılaştırma: Random baseline | Q-Learning | REINFORCE-NN (tek popülasyon, tek seed).
 
 Kullanım:
     python -m src.comparison          # Varsayılan ayarlar
-    python -m src.comparison --episodes 200
-
-    python -m src.comparison --baseline mb   # Eski kural tabanlı (MB/UILI) baseline
+    python -m src.comparison --episodes 200 --nn_episodes 400 --save_dir out
 
 Adımlar:
-1. Baseline'ı aynı seed ile çalıştır. Varsayılan (--baseline random): rastgele
-   zero-intelligence baseline, aynı gün üzerinde --baseline_draws fiyat
-   çekilişinin ortalaması (src/random_environment.py). --baseline mb: kural
-   tabanlı MB/UILI baseline, tek gün (src/ql_environment.py BaselineEnv).
-2. Q-Learning ajanları n_episodes boyunca eğit.
-3. Q-Learning ajanlarını greedy (ε=0) modunda değerlendir.
-4. Her iki sonucu karşılaştıran metrikler ve grafikler üret.
+1. Rastgele zero-intelligence baseline: aynı gün üzerinde --baseline_draws fiyat
+   çekilişinin ortalaması (src/random_environment.py).
+2. Q-Learning ajanlarını --episodes boyunca eğit, greedy (ε=0) değerlendir.
+3. REINFORCE-NN ajanlarını --nn_episodes boyunca eğit, deterministik (σ=0) değerlendir.
+4. Üç sonucu karşılaştıran tablolar, grafikler ve log dosyası üret.
+
+Çıktılar (--save_dir, varsayılan "."): log dosyası (--log_name, varsayılan
+overall_summary.txt), ql_vs_baseline_comparison.png, ql_training_curve.png.
 """
 
 from __future__ import annotations
@@ -30,7 +29,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.config import SimConfig
-from src.ql_environment import QLearningEnv, BaselineEnv
+from src.ql_environment import QLearningEnv
 from src.reinforce_environment import REINFORCEEnv
 from src.metrics import MetricsCollector
 from src.random_environment import run_random_baseline
@@ -42,11 +41,6 @@ from src.seeding import seed_everything
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _safe_avg(arr: np.ndarray) -> float:
-    valid = arr[arr > 0]
-    return float(np.mean(valid)) if len(valid) > 0 else 0.0
-
 
 def _print_comparison_3way(
     bl_metrics: MetricsCollector,
@@ -64,21 +58,9 @@ def _print_comparison_3way(
     n_producers : üretici (satıcı) ajan sayısı — config.n_producers verilmelidir.
                   None ise eski davranış (n_agents // 2; yalnızca N+N için doğru).
     """
-    bl_cost  = sum(bl_metrics.agent_total_cost.values())
-    ql_cost  = sum(ql_metrics.agent_total_cost.values())
-    nn_cost  = sum(nn_metrics.agent_total_cost.values())
-
     bl_trade = bl_metrics.total_internal_trading()
     ql_trade = ql_metrics.total_internal_trading()
     nn_trade = nn_metrics.total_internal_trading()
-
-    bl_unmet = bl_metrics.total_unmet_demand()
-    ql_unmet = ql_metrics.total_unmet_demand()
-    nn_unmet = nn_metrics.total_unmet_demand()
-
-    bl_curt  = bl_metrics.total_curtailment()
-    ql_curt  = ql_metrics.total_curtailment()
-    nn_curt  = nn_metrics.total_curtailment()
 
     bl_price = bl_metrics.average_clearing_price()
     ql_price = ql_metrics.average_clearing_price()
@@ -396,14 +378,12 @@ def run_comparison(
     save_dir: str = ".",
     verbose: bool = True,
     summary_file=None,
-    baseline: str = "random",
     baseline_draws: int = 200,
 ) -> Tuple:
     """Tam 3-yol karşılaştırma pipeline'ını çalıştır.
 
-    1. Baseline — baseline="random": rastgele ZI baseline, aynı gün üzerinde
-       baseline_draws fiyat çekilişinin ortalaması (varsayılan);
-       baseline="mb": kural tabanlı MB/UILI baseline, tek gün
+    1. Baseline — rastgele ZI baseline, aynı gün üzerinde baseline_draws fiyat
+       çekilişinin ortalaması
     2. Q-Learning  → n_episodes eğitim + greedy değerlendirme
     3. REINFORCE-NN → nn_episodes eğitim + deterministik değerlendirme
     4. 3-yol tablo + grafik + log dosyası
@@ -423,42 +403,26 @@ def run_comparison(
 
     # ── 1. Baseline ──────────────────────────────────────────────────
     # NOT: Rastgele baseline GLOBAL RNG tüketmez (ajan başına ayrı Generator,
-    # bkz. src/random_agent.py); bu yüzden QL/NN sonuçları baseline seçiminden
+    # bkz. src/random_agent.py); bu yüzden QL/NN sonuçları baseline'dan
     # bağımsızdır ve seed_everything() sonrası adım sırası değişmemiştir.
-    if baseline == "random":
-        bl_label = "Random"
-        bl_note  = f"Baseline = rastgele ZI baseline, {baseline_draws} fiyat çekilişi ortalaması"
-        if verbose:
-            print("\n" + "=" * 60)
-            print(f"  ADIM 1/3 — Random Baseline (ZI, {baseline_draws} çekiliş) Çalıştırılıyor")
-            print("=" * 60)
-        bl_metrics = run_random_baseline(
-            config, n_draws=baseline_draws, seed=config.seed, verbose=False,
+    bl_label = "Random"
+    bl_note  = f"Baseline = rastgele ZI baseline, {baseline_draws} fiyat çekilişi ortalaması"
+    if verbose:
+        print("\n" + "=" * 60)
+        print(f"  ADIM 1/3 — Random Baseline (ZI, {baseline_draws} çekiliş) Çalıştırılıyor")
+        print("=" * 60)
+    bl_metrics = run_random_baseline(
+        config, n_draws=baseline_draws, seed=config.seed, verbose=False,
+    )
+    if verbose:
+        print(bl_metrics.format_table())
+
+    if summary_file is not None:
+        summary_file.write(
+            f"\n[ADIM 1/3] RANDOM BASELINE SONUÇLARI (ZI, {baseline_draws} çekiliş ortalaması)\n"
         )
-        if verbose:
-            print(bl_metrics.format_table())
-
-        if summary_file is not None:
-            summary_file.write(
-                f"\n[ADIM 1/3] RANDOM BASELINE SONUÇLARI (ZI, {baseline_draws} çekiliş ortalaması)\n"
-            )
-            summary_file.write(bl_metrics.summary() + "\n")
-            summary_file.write(bl_metrics.format_table() + "\n")
-    elif baseline == "mb":
-        bl_label = "Baseline"
-        bl_note  = None
-        if verbose:
-            print("\n" + "=" * 60)
-            print("  ADIM 1/3 — Baseline (Kural Tabanlı) Çalıştırılıyor")
-            print("=" * 60)
-        bl_env     = BaselineEnv(config)
-        bl_metrics = bl_env.run_baseline(seed=config.seed, verbose=verbose)
-
-        if summary_file is not None:
-            summary_file.write("\n[ADIM 1/3] BASELINE SONUÇLARI\n")
-            summary_file.write(bl_metrics.summary() + "\n")
-    else:
-        raise ValueError(f"Bilinmeyen baseline: {baseline!r} (random | mb)")
+        summary_file.write(bl_metrics.summary() + "\n")
+        summary_file.write(bl_metrics.format_table() + "\n")
 
     # ── 2. Q-Learning Eğitim + Değerlendirme ─────────────────────────
     if verbose:
@@ -503,9 +467,7 @@ def run_comparison(
 
     # ── 5. Welfare summary (her model için ayrı ayrı) ─────────────────
     n_prod = config.n_producers
-    bl_welfare_label = (
-        f"RANDOM BASELINE ({baseline_draws} CEKILIS ORT.)" if baseline == "random" else "BASELINE"
-    )
+    bl_welfare_label = f"RANDOM BASELINE ({baseline_draws} CEKILIS ORT.)"
     for label, m in [(bl_welfare_label, bl_metrics), ("Q-LEARNING", ql_metrics), ("REINFORCE-NN", nn_metrics)]:
         welfare_str = m.summary_welfare(n_prod)
         print(f"\n[{label}]")
@@ -516,8 +478,7 @@ def run_comparison(
     plot_comparison(
         bl_metrics, ql_metrics, ql_ep_costs, save_dir=save_dir,
         nn_metrics=nn_metrics, nn_episode_costs=nn_ep_costs,
-        bl_label=(f"Random Baseline (ZI, {baseline_draws} çekiliş ort.)"
-                  if baseline == "random" else "Baseline"),
+        bl_label=f"Random Baseline (ZI, {baseline_draws} çekiliş ort.)",
         n_producers=config.n_producers,
     )
     plot_training_curve(ql_ep_costs, save_dir=save_dir)
@@ -525,12 +486,9 @@ def run_comparison(
     return bl_metrics, ql_metrics, nn_metrics, ql_ep_costs, nn_ep_costs
 
 
-# Lambda sweep varsayılan değerleri
-_DEFAULT_LAMBDAS = [0.15]
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Baseline | Q-Learning | REINFORCE-NN — 3-Yol Karşılaştırma"
+        description="Random Baseline | Q-Learning | REINFORCE-NN — 3-Yol Karşılaştırma"
     )
     parser.add_argument("--episodes", type=int, default=400,
                         help="Q-Learning eğitim episode sayısı (varsayılan: 400)")
@@ -540,10 +498,6 @@ if __name__ == "__main__":
                         help="Grafik ve log dosyalarının kaydedileceği dizin")
     parser.add_argument("--seed", type=int, default=1,
                         help="Rastgelelik tohumu — aynı seed aynı sonucu verir (varsayılan: 1)")
-    parser.add_argument(
-        "--lambdas", type=float, nargs="+", default=_DEFAULT_LAMBDAS,
-        help="Lambda_UILI sweep değerleri (varsayılan: 0.15)",
-    )
     parser.add_argument(
         "--beta", type=float, default=0.3,
         help="Reward fiyat primi katsayisi β (varsayılan: 0.3)",
@@ -557,20 +511,12 @@ if __name__ == "__main__":
         help="Log dosyası adı (varsayılan: overall_summary.txt)",
     )
     parser.add_argument(
-        "--baseline", type=str, choices=["random", "mb"], default="random",
-        help="Baseline türü: random = rastgele ZI (çekiliş ortalaması), "
-             "mb = kural tabanlı MB/UILI (varsayılan: random)",
-    )
-    parser.add_argument(
         "--baseline_draws", type=int, default=200,
         help="Random baseline fiyat çekilişi sayısı (varsayılan: 200)",
     )
     args = parser.parse_args()
 
-    if args.baseline == "random":
-        bl_header = f"Random Baseline (ZI, {args.baseline_draws} cekilis ort.)"
-    else:
-        bl_header = "Baseline"
+    bl_header = f"Random Baseline (ZI, {args.baseline_draws} cekilis ort.)"
 
     os.makedirs(args.save_dir, exist_ok=True)
     log_path = os.path.join(args.save_dir, args.log_name)
@@ -591,34 +537,19 @@ if __name__ == "__main__":
         print(header, end="")
         sf.write(header)
 
-        for lam in args.lambdas:
-            lam_header = (
-                f"\n{'='*84}\n"
-                f"  LAMBDA_UILI = {lam:.2f}\n"
-                f"{'='*84}\n"
-            )
-            print(lam_header, end="")
-            sf.write(lam_header)
-
-            lam_tag = f"lambda_{lam:.2f}".replace(".", "_")
-            lam_dir = os.path.join(args.save_dir, lam_tag)
-            os.makedirs(lam_dir, exist_ok=True)
-
-            cfg = SimConfig(
-                seed=args.seed,
-                lambda_uili=lam,
-                reward_beta=args.beta,
-                reward_curtail_rate=args.curtail_rate,
-            )
-            run_comparison(
-                cfg,
-                n_episodes=args.episodes,
-                nn_episodes=args.nn_episodes,
-                save_dir=lam_dir,
-                verbose=False,
-                summary_file=sf,
-                baseline=args.baseline,
-                baseline_draws=args.baseline_draws,
-            )
+        cfg = SimConfig(
+            seed=args.seed,
+            reward_beta=args.beta,
+            reward_curtail_rate=args.curtail_rate,
+        )
+        run_comparison(
+            cfg,
+            n_episodes=args.episodes,
+            nn_episodes=args.nn_episodes,
+            save_dir=args.save_dir,
+            verbose=False,
+            summary_file=sf,
+            baseline_draws=args.baseline_draws,
+        )
 
     print(f"\nSimülasyon log dosyasi olusturuldu: {log_path}")

@@ -1,9 +1,9 @@
 """
 Rastgele (Zero-Intelligence) Baseline ortamı ve çoklu çekiliş koşucusu.
 
-BaselineEnv (src/ql_environment.py) ile aynı desen: EnergyTradingEnv'i miras
-alır, reset()'te ajanları RandomAgent ile değiştirir. Profiller, market ve
-grid fallback birebir aynıdır; yalnızca fiyatlama rastgeledir.
+QLearningEnv / REINFORCEEnv ile aynı desen: EnergyTradingEnv'i miras alır,
+reset()'te ajanları RandomAgent ile değiştirir. Profiller, market ve grid
+fallback birebir aynıdır; yalnızca fiyatlama rastgeledir.
 
 Tek bir rastgele gün gürültülü olduğundan baseline, AYNI gün (aynı profil
 seed'i) üzerinde n_draws farklı fiyat çekilişinin ORTALAMASI olarak raporlanır:
@@ -18,7 +18,7 @@ min / max tutulur. Ayrıca yalnızca profillerden hesaplanan üst sınır
 ve eşleştirme verimliliği η = P2P / E_max × 100 hesaplanır.
 
 Döndürülen RandomBaselineMetrics nesnesi bir MetricsCollector alt sınıfıdır;
-comparison.py'de baseline'ın MetricsCollector'ı yerine doğrudan kullanılabilir
+comparison.py'de baseline'ın MetricsCollector'ı olarak doğrudan kullanılır
 (tablolar, summary(), summary_welfare(), grafikler) ve çekiliş ortalamalı
 değerler döndürür.
 
@@ -62,8 +62,6 @@ class RandomBaselineEnv(EnergyTradingEnv):
             rnd_agent = RandomAgent(
                 agent_id=agent.agent_id,
                 agent_type=agent.agent_type,
-                mb_params=agent.mb_params,
-                mc_params=agent.mc_params,
                 config=self.config,
                 price_seed=self.price_seed,
             )

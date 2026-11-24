@@ -64,7 +64,7 @@ Ayrıntılar:
 ```bash
 git clone https://github.com/efeylm/energy-trading.git
 cd energy-trading
-git checkout revize
+git checkout jeps-final
 python3 -m venv .venv && source .venv/bin/activate
 pip install numpy matplotlib
 pip install torch --index-url https://download.pytorch.org/whl/cpu   # CPU sürümü yeterli

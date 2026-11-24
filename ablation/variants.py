@@ -16,8 +16,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def chdir_repo_root() -> None:
-    """src/agent.py MB eğrisi dosyalarını GÖRELİ yoldan ("src/data/...") okur;
-    bu yüzden her giriş noktası çalışma dizinini repo köküne sabitler."""
+    """Her giriş noktası çalışma dizinini repo köküne sabitler (göreli çıktı
+    yolları, ör. ablation/results, ve `src` paketinin içe aktarımı için)."""
     os.chdir(REPO_ROOT)
     if REPO_ROOT not in sys.path:
         sys.path.insert(0, REPO_ROOT)

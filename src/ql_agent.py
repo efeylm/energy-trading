@@ -19,7 +19,7 @@ Update : Q(s,a) ← Q(s,a) + α [r + γ·max Q(s',·) − Q(s,a)]   (makale Eq. 
          (makale Bölüm 3.7: "each role is represented by a compact state").
 
 Bu modül yalnızca Q-Learning mantığını içerir.
-Baseline karşılaştırması için baseline_agent.py dosyasına bakınız.
+Baseline (rastgele zero-intelligence ajan) için random_agent.py dosyasına bakınız.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from __future__ import annotations
 import numpy as np
 from typing import Optional, Tuple
 
-from src.config import SimConfig, AgentMBParams, AgentMCParams
+from src.config import SimConfig
 from src.agent import EnergyAgent, Observation, Action
 from src.market import Order
 
@@ -116,8 +116,6 @@ class QLearningAgent(EnergyAgent):
         self,
         agent_id: int,
         agent_type: str,
-        mb_params: AgentMBParams,
-        mc_params: AgentMCParams,
         config: SimConfig,
         alpha_lr: float = 0.1,
         gamma: float = 0.95,
@@ -125,7 +123,7 @@ class QLearningAgent(EnergyAgent):
         epsilon_min: float = 0.05,
         epsilon_decay: float = 0.985,   # makale Tablo 1
     ):
-        super().__init__(agent_id, agent_type, mb_params, mc_params, config)
+        super().__init__(agent_id, agent_type, config)
 
         self.alpha_lr      = alpha_lr
         self.gamma         = gamma
@@ -186,10 +184,6 @@ class QLearningAgent(EnergyAgent):
             return np.random.randint(N_ACTIONS)
         return int(np.argmax(q_table[state]))
 
-    def _select_action(self, state: Tuple[int, int]) -> int:
-        """Satıcı Q-tablosu için ε-greedy aksiyon seçimi (geriye dönük uyumluluk)."""
-        return self._select_action_from_table(state, self.q_table)
-
     def _ask_price_from_action(self, action_idx: int) -> float:
         """Aksiyon indeksini $/kWh satış fiyatına çevirir."""
         prices = _action_prices(self.fit_price, self.tou_price)
@@ -206,12 +200,11 @@ class QLearningAgent(EnergyAgent):
 
     def decide_action(self, obs: Observation) -> Action:
         """Satıcı ve alıcı için Q-tablosu kullanarak ε-greedy aksiyon seç."""
-        self._current_hour = obs.hour
         net = obs.inflexible_load
         order = None
 
         if net > 0.01:
-            # ALICI: Alıcı Q-tablosundan flat bid fiyatı seç
+            # ALICI: Alıcı Q-tablosundan teklif (bid) fiyatı seç
             buyer_state = self._encode_buyer_state(obs)
             buy_action_idx = self._select_action_from_table(buyer_state, self.buy_q_table)
             bid_price = self._bid_price_from_action(buy_action_idx)
@@ -226,11 +219,9 @@ class QLearningAgent(EnergyAgent):
                 price=float(np.clip(bid_price, 0.001, 2.0)),
                 quantity=net,
                 is_buy=True,
-                is_emergency=False,
-                use_flat_price=True,
             )
         elif net < -0.01:
-            # SATICI: Satıcı Q-tablosundan flat ask fiyatı seç
+            # SATICI: Satıcı Q-tablosundan istek (ask) fiyatı seç
             seller_state = self._encode_state(obs)
             sell_action_idx = self._select_action_from_table(seller_state, self.q_table)
             ask_price = self._ask_price_from_action(sell_action_idx)
@@ -245,7 +236,6 @@ class QLearningAgent(EnergyAgent):
                 price=float(np.clip(ask_price, 0.001, 2.0)),
                 quantity=abs(net),
                 is_buy=False,
-                is_emergency=False,
             )
 
         return Action(order=order)
@@ -310,50 +300,6 @@ class QLearningAgent(EnergyAgent):
         self._prev_action_idx = None
         self._prev_obs        = None
         self._prev_role       = None
-
-    # ------------------------------------------------------------------
-    # Diagnostics
-    # ------------------------------------------------------------------
-
-    def q_table_stats(self) -> dict:
-        """Satıcı Q-tablosu için özet istatistikler döner."""
-        return {
-            "mean":    float(np.mean(self.q_table)),
-            "std":     float(np.std(self.q_table)),
-            "max":     float(np.max(self.q_table)),
-            "min":     float(np.min(self.q_table)),
-            "nonzero": int(np.count_nonzero(self.q_table)),
-        }
-
-    def buy_q_table_stats(self) -> dict:
-        """Alıcı Q-tablosu için özet istatistikler döner."""
-        return {
-            "mean":    float(np.mean(self.buy_q_table)),
-            "std":     float(np.std(self.buy_q_table)),
-            "max":     float(np.max(self.buy_q_table)),
-            "min":     float(np.min(self.buy_q_table)),
-            "nonzero": int(np.count_nonzero(self.buy_q_table)),
-        }
-
-    def greedy_policy_summary(self) -> np.ndarray:
-        """Satıcı: Her durum için greedy aksiyon indeksini döner (2-D array: saat × PV)."""
-        return np.argmax(self.q_table, axis=-1)
-
-    def greedy_buyer_policy_summary(self) -> np.ndarray:
-        """Alıcı: Her durum için greedy aksiyon indeksini döner (2-D array: saat × demand)."""
-        return np.argmax(self.buy_q_table, axis=-1)
-
-    def greedy_policy_prices(self) -> np.ndarray:
-        """Satıcı: Her durum için greedy aksiyonun $/kWh fiyatını döner."""
-        idx_grid = self.greedy_policy_summary()
-        prices = _action_prices(self.fit_price, self.tou_price)
-        return prices[idx_grid]
-
-    def greedy_buyer_policy_prices(self) -> np.ndarray:
-        """Alıcı: Her durum için greedy aksiyonun $/kWh teklif fiyatını döner."""
-        idx_grid = self.greedy_buyer_policy_summary()
-        prices = _action_prices(self.fit_price, self.tou_price)
-        return prices[idx_grid]
 
     def __repr__(self) -> str:
         return (

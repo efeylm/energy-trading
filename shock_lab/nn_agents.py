@@ -10,7 +10,7 @@ nn_oracle            : aynı tasarım, anlık duruma iki sürekli girdi eklenir:
 from __future__ import annotations
 
 from collections import deque
-from typing import Dict, Optional
+from typing import Dict
 
 import torch
 import torch.optim as optim
@@ -19,7 +19,7 @@ from src.config import SimConfig
 from src.reinforce_agent import REINFORCEAgent, PolicyNet
 from src.reinforce_environment import REINFORCEEnv
 
-from shock_lab.common import RegimeMixin, Regime, NORMAL, _agent_type, _base_params
+from shock_lab.common import RegimeMixin, Regime, _agent_type
 
 
 class OracleREINFORCEAgent(REINFORCEAgent):
@@ -63,9 +63,8 @@ class ShockNNEnv(RegimeMixin, REINFORCEEnv):
         cls = OracleREINFORCEAgent if oracle else REINFORCEAgent
         self.oracle = oracle
         for i in range(config.n_agents):
-            mb, mc = _base_params(i, config)
             self._rf_agents[i] = cls(
-                agent_id=i, agent_type=_agent_type(i, config), mb_params=mb, mc_params=mc,
+                agent_id=i, agent_type=_agent_type(i, config),
                 config=config, lr=self.nn_lr, gamma=self.nn_gamma, sigma=self.nn_sigma,
                 sigma_min=self.nn_sigma_min, sigma_decay=self.nn_sigma_decay,
                 hidden=self.nn_hidden, seq_len=self.nn_seq_len, d_model=self.nn_d_model,

@@ -23,9 +23,9 @@ import numpy as np
 def seed_everything(seed: int) -> None:
     """Tüm GLOBAL rastgelelik kaynaklarını sabitler — tekrarlanabilirlik için.
 
-    Profiller ve ajan parametre varyasyonu zaten seed'li `np.random.default_rng`
-    kullanıyordu; Baseline bu yüzden her çalıştırmada birebir aynı çıkıyordu.
-    Ancak öğrenen ajanlar seed'lenmemiş GLOBAL RNG'lere bağlıydı:
+    Profiller zaten seed'li `np.random.default_rng` kullanır (rastgele baseline
+    da ajan başına kendi Generator'ını; bkz. src/random_agent.py). Ancak öğrenen
+    ajanlar seed'lenmemiş GLOBAL RNG'lere bağlıydı:
 
         ql_agent.py       : np.random.random() / np.random.randint()  → ε-greedy keşif
         reinforce_agent.py: torch.randn_like()                        → Gauss gürültüsü
