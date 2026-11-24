@@ -1,0 +1,6 @@
+# Smoke testi çıktıları (python -m shock_lab.run_all --smoke) — git'e eklenmez.
+# runs/ ve eval/ BİLİNÇLİ OLARAK yok sayılmaz (sonuçlar push edilecek).
+runs_smoke/
+eval_smoke/
+# değerlendirmenin ara önbelleği (eval_results.json zaten her şeyi içerir)
+eval/cache/
