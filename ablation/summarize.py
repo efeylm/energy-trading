@@ -16,6 +16,12 @@ std: seed'ler arası örneklem std (ddof=1; tek seed'de 0). Eşleştirilmiş far
 seed'ler üzerinden (a − b) hesaplanır. Metrik anahtarları src özetiyle aynıdır.
 Yeniden üretim kontrolü: results/A_p<P>c<C>_seed<S>.json varsa q_base / nn_full
 metrikleri oradaki ql / nn metrikleriyle karşılaştırılır (yalnızca rapor; hata vermez).
+
+Ausgrid sonuçları (JSON'da profile_source = "ausgrid"; ör. ablation/results_ausgrid):
+başlıkta profil kaynağı ve 73 senaryoluk değerlendirme belirtilir; yeniden üretim
+kontrolü results_ausgrid/A_*.json ile yapılır (yoksa açık bir mesajla atlanır).
+Profil kaynağı alanı olmayan eski JSON'lar sentetik sayılır. Bir dizinde iki kaynak
+karışıksa uyarı basılır.
 """
 
 from __future__ import annotations
@@ -81,6 +87,16 @@ def load_runs(d: str) -> List[Dict]:
     return runs
 
 
+def profile_source(r: Dict) -> str:
+    """Koşunun profil kaynağı; alanı olmayan (eski) JSON'lar sentetiktir."""
+    return r.get("profile_source") or r.get("sim_config", {}).get("profile_source") or "synthetic"
+
+
+def ref_dir(source: str) -> str:
+    """Yeniden üretim kontrolü için src sonuç dizini (göreli ad)."""
+    return "results_ausgrid" if source == "ausgrid" else "results"
+
+
 def group(runs: List[Dict]) -> Dict[str, Dict[str, Dict[int, Dict]]]:
     """pop → varyant → seed → run"""
     g: Dict[str, Dict[str, Dict[int, Dict]]] = {}
@@ -139,16 +155,18 @@ def paired(a: Dict[int, Dict], b: Dict[int, Dict]) -> Optional[Dict]:
     return out
 
 
-def reproduction(g_pop: Dict[str, Dict[int, Dict]], pop: str) -> List[Dict]:
+def reproduction(g_pop: Dict[str, Dict[int, Dict]], pop: str, source: str = "synthetic") -> List[Dict]:
     rows = []
     p, c = pop.split("+")
     for variant, method in (("q_base", "ql"), ("nn_full", "nn")):
         for s, r in sorted(g_pop.get(variant, {}).items()):
-            path = os.path.join(REPO_ROOT, "results", f"A_p{p}c{c}_seed{s}.json")
+            path = os.path.join(REPO_ROOT, ref_dir(source), f"A_p{p}c{c}_seed{s}.json")
             if not os.path.exists(path):
                 continue
             with open(path, encoding="utf-8") as f:
                 ref = json.load(f)
+            if ref.get("profile_source", "synthetic") != source:
+                continue                       # farklı profil kaynağı: karşılaştırılamaz
             res = ref.get("results", {}).get(method)
             if res is None:
                 continue
@@ -179,13 +197,33 @@ def _spm(d: Dict, fmt: str) -> str:
 
 def build_text(g, d: str) -> Tuple[str, Dict]:
     out_json: Dict = {"source_dir": os.path.abspath(d), "populations": {}}
-    hosts = sorted({r.get("hostname", "?") for pg in g.values() for vg in pg.values() for r in vg.values()})
-    sec: List[str] = ["\n".join([
+    all_runs = [r for pg in g.values() for vg in pg.values() for r in vg.values()]
+    hosts = sorted({r.get("hostname", "?") for r in all_runs})
+    sources = sorted({profile_source(r) for r in all_runs})
+    source = "ausgrid" if sources == ["ausgrid"] else "synthetic"
+    head = [
         f"INPUT-ABLATION SUMMARY — {os.path.abspath(d)}",
         f"  Host(s): {', '.join(hosts)}",
-        "  Cells: mean ± sample std over seeds (ddof=1). Paired Δ = variant − reference on the same seed.",
-        "  Every variant: seed_everything(seed) → env.train(N) → env.run_evaluation(seed) "
-        "(identical to src/experiment.py); evaluation day = seed."])]
+        "  Cells: mean ± sample std over seeds (ddof=1). Paired Δ = variant − reference on the same seed."]
+    if source == "ausgrid":
+        out_json["profile_source"] = "ausgrid"
+        split_ids = sorted({str(r.get("ausgrid", {}).get("split_id", "?")) for r in all_runs})
+        n_sc = sorted({len(r.get("eval_scenarios", {}).get("eval_seed", [])) for r in all_runs})
+        head += [
+            f"  Profiles: Ausgrid real household data (split_id {', '.join(split_ids)}); training days = "
+            "Ausgrid train scenarios (train homes × train days).",
+            "  Every variant: seed_everything(seed) → env.train(N) → greedy evaluation on all "
+            f"{'/'.join(map(str, n_sc))} Ausgrid test scenarios (identical to src/experiment.py, "
+            "--profiles ausgrid); energies / $ summed over scenarios, η = 100·ΣP2P/ΣE_max, "
+            "price volume-weighted."]
+    else:
+        head.append("  Every variant: seed_everything(seed) → env.train(N) → env.run_evaluation(seed) "
+                    "(identical to src/experiment.py); evaluation day = seed.")
+    if len(sources) > 1:
+        head.append(f"  WARNING: mixed profile sources in this directory ({', '.join(sources)}); "
+                    "tables pool them — use separate directories.")
+        out_json["profile_source"] = "mixed"
+    sec: List[str] = ["\n".join(head)]
 
     for pop in pops_sorted(g):
         gp = g[pop]
@@ -287,7 +325,7 @@ def build_text(g, d: str) -> Tuple[str, Dict]:
                                   "share of order-placing decisions (all agents)."]))
 
         # Tablo 5: yeniden üretim
-        rep = reproduction(gp, pop)
+        rep = reproduction(gp, pop, source)
         pj["reproduction"] = rep
         if rep:
             rows = [[x["variant"], str(x["seed"]), x["src_file"], f"{x['episodes']}/{x['src_episodes']}",
@@ -300,12 +338,15 @@ def build_text(g, d: str) -> Tuple[str, Dict]:
                                  ["Expected ≈ 0 when budgets match and the machine/library versions match; "
                                   "report only (not a failure)."]))
         else:
-            sec.append(f"  Reproduction check: no published src result (results/A_*) for population {pop}.")
+            sec.append(f"  Reproduction check: skipped — no src result with profile source '{source}' "
+                       f"({ref_dir(source)}/A_p{pop.replace('+', 'c')}_seed*.json) "
+                       f"for population {pop}.")
 
         # Denge
         viol = [f"{r['variant']} s{r['seed']}" for vg in gp.values() for r in vg.values()
                 if not r.get("balance_check", {}).get("ok", True)]
-        sec.append(f"  Energy balance on evaluation day (D = P2P + grid buy, S = P2P + grid sell): "
+        sec.append(f"  Energy balance on {'every evaluation scenario' if source == 'ausgrid' else 'evaluation day'} "
+                   f"(D = P2P + grid buy, S = P2P + grid sell): "
                    f"{'all jobs OK' if not viol else 'VIOLATIONS: ' + ', '.join(viol)}")
         out_json["populations"][pop] = pj
 

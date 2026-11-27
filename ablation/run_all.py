@@ -9,6 +9,14 @@ Kullanım (repo kökünden):
     nohup python -m ablation.run_all --workers 16 > ablation/run_all.out 2>&1 &
     python -m ablation.run_all --smoke --workers 4             # küçük deneme → ablation/results_smoke
     python -m ablation.run_all --populations 10+10,4+4 --seeds 1,2,3 --variants q_base,nn_noprice
+    python -m ablation.run_all --profiles ausgrid --populations 4+4,10+10 --dry-run
+                                                               # Ausgrid → ablation/results_ausgrid
+
+Ausgrid modu (--profiles ausgrid): her işe --profiles ausgrid geçirilir (eğitim =
+Ausgrid eğitim senaryoları, değerlendirme = 73 test senaryosu; bkz. run_job).
+Varsayılan çıktı ablation/results_ausgrid (--smoke ile ablation/results_ausgrid_smoke);
+eski ablation/results dokunulmaz. Veri önbelleği ve bölünme, işçiler başlamadan önce
+ana süreçte kurulur (src/run_experiments.py gibi).
 
 Her iş: sys.executable -m ablation.run_job ... (OMP/MKL/OPENBLAS_NUM_THREADS=1).
 Çıktı: <out>/<iş>.json, <out>/logs/<iş>.log. Devam ettirilebilir: JSON'u olan iş atlanır.
@@ -49,6 +57,7 @@ class Job:
     seed: int
     episodes_q: int
     episodes_nn: int
+    profiles: str = "synthetic"
 
     @property
     def name(self) -> str:
@@ -71,7 +80,7 @@ class Job:
                 "--producers", str(self.producers), "--consumers", str(self.consumers),
                 "--seed", str(self.seed), "--variant", self.variant,
                 "--episodes-q", str(self.episodes_q), "--episodes-nn", str(self.episodes_nn),
-                "--out", out_dir]
+                "--out", out_dir] + (["--profiles", self.profiles] if self.profiles != "synthetic" else [])
 
 
 def parse_pops(text: str) -> List[Tuple[int, int]]:
@@ -84,8 +93,8 @@ def parse_pops(text: str) -> List[Tuple[int, int]]:
     return out
 
 
-def build_jobs(pops, seeds, variants, episodes_q, episodes_nn) -> List[Job]:
-    jobs = [Job(v, p, c, s, episodes_q, episodes_nn)
+def build_jobs(pops, seeds, variants, episodes_q, episodes_nn, profiles: str = "synthetic") -> List[Job]:
+    jobs = [Job(v, p, c, s, episodes_q, episodes_nn, profiles)
             for (p, c) in pops for s in seeds for v in VARIANT_ORDER if v in variants]
     # En uzun (NN) işler önce; eşitlikte ada göre (deterministik sıra)
     jobs.sort(key=lambda j: (-j.est_seconds(), j.name))
@@ -109,7 +118,11 @@ def main(argv=None) -> int:
     ap.add_argument("--variants", default=",".join(VARIANT_ORDER))
     ap.add_argument("--episodes-q", type=int, default=None, help="Q temel bütçesi (varsayılan 3000)")
     ap.add_argument("--episodes-nn", type=int, default=None, help="NN bütçesi (varsayılan 7000)")
-    ap.add_argument("--out", default=None, help="çıktı dizini (varsayılan ablation/results)")
+    ap.add_argument("--out", default=None,
+                    help="çıktı dizini (varsayılan ablation/results; --profiles ausgrid ile "
+                         "ablation/results_ausgrid)")
+    ap.add_argument("--profiles", choices=["synthetic", "ausgrid"], default="synthetic",
+                    help="Profil kaynağı (varsayılan: synthetic = eski davranış)")
     ap.add_argument("--dry-run", action="store_true", help="planı ve süre tahminini yaz, çalıştırma")
     ap.add_argument("--smoke", action="store_true", help="küçük bütçe (4+4, seed 1-2, 20 ep) → results_smoke")
     ap.add_argument("--no-summary", action="store_true", help="sonda özeti çalıştırma")
@@ -121,10 +134,14 @@ def main(argv=None) -> int:
     variants = parse_variants(args.variants)
     eq = args.episodes_q if args.episodes_q is not None else plan["episodes_q"]
     enn = args.episodes_nn if args.episodes_nn is not None else plan["episodes_nn"]
-    out = args.out or plan["out"]
+    if args.profiles == "ausgrid":
+        default_out = "ablation/results_ausgrid_smoke" if args.smoke else "ablation/results_ausgrid"
+    else:
+        default_out = plan["out"]
+    out = args.out or default_out
     out_dir = out if os.path.isabs(out) else os.path.join(REPO_ROOT, out)
     log_dir = os.path.join(out_dir, "logs")
-    jobs = build_jobs(pops, seeds, variants, eq, enn)
+    jobs = build_jobs(pops, seeds, variants, eq, enn, profiles=args.profiles)
     workers = max(1, args.workers)
     total = len(jobs)
 
@@ -134,7 +151,8 @@ def main(argv=None) -> int:
     todo = [j for j in jobs if not os.path.exists(out_path(j))]
     est = [j.est_seconds() for j in todo]
     print(f"{total} iş ({len(todo)} çalışacak) → {out_dir} | workers={workers} | "
-          f"popülasyonlar={','.join(f'{p}+{c}' for p, c in pops)} seed'ler={seeds} | Q {eq} ep, NN {enn} ep",
+          f"popülasyonlar={','.join(f'{p}+{c}' for p, c in pops)} seed'ler={seeds} | Q {eq} ep, NN {enn} ep"
+          + (f" | profiller={args.profiles}" if args.profiles != "synthetic" else ""),
           flush=True)
     print(f"Tahmin (yayımlanmış sonuçların sunucusuna göre; çekirdek ≥ işçi varsayımıyla): "
           f"toplam iş süresi {fmt_hms(sum(est))}, duvar saati ≈ {fmt_hms(makespan(est, workers))}",
@@ -144,7 +162,15 @@ def main(argv=None) -> int:
             state = "VAR (atlanacak)" if os.path.exists(out_path(j)) else "bekliyor"
             print(f"  {i:3d}. {j.name:<28} {j.producers:>2}+{j.consumers:<2} seed={j.seed} "
                   f"ep={j.episodes:<6} tahmin≈{fmt_hms(j.est_seconds())} [{state}]")
+        if jobs:
+            print("  komut örneği: " + " ".join(jobs[0].argv(out_dir)[1:]))
         return 0
+
+    if args.profiles == "ausgrid":
+        # Veri önbelleğini ve bölünmeyi işçilerden ÖNCE burada kur: işçiler yalnızca okur.
+        from src.ausgrid_profiles import ensure_cache, load_split
+        ensure_cache()
+        print(f"Ausgrid önbelleği hazır; split_id={load_split()['split_id']}", flush=True)
 
     os.makedirs(log_dir, exist_ok=True)
     env = dict(os.environ, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1",

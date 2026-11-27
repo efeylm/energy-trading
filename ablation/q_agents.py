@@ -127,9 +127,13 @@ class AblationQLEnv(QLearningEnv):
         return sum(a.price_visits for a in self._ql_agents.values())
 
     def run_evaluation(self, seed=None, verbose=True):
-        # Değerlendirme öncesi ziyaret sayıları (eğitim / değerlendirme ayrımı için)
-        v = self.total_price_visits()
-        self._eval_visit_snapshot = None if v is None else v.copy()
+        # Değerlendirme öncesi ziyaret sayıları (eğitim / değerlendirme ayrımı için).
+        # Yalnızca İLK değerlendirme çağrısında alınır: Ausgrid modunda run_evaluation
+        # 73 kez (her test senaryosu için) çağrılır ve "eval" ziyaretleri hepsini
+        # kapsamalıdır. Sentetikte tek çağrı olduğundan davranış aynıdır.
+        if self._eval_visit_snapshot is None:
+            v = self.total_price_visits()
+            self._eval_visit_snapshot = None if v is None else v.copy()
         return super().run_evaluation(seed=seed, verbose=verbose)
 
     def diagnostics(self) -> Dict:

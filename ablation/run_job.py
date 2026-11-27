@@ -15,6 +15,15 @@ E_max, değerlendirme gününün (gün seed'i = seed) profillerinden src run_job
 gibi hesaplanır. Tek fark: ilerleme satırı ~%2'de bir (src'de %10) — bunun için
 src.experiment._attach_progress bu iş süresince ~%2'lik eşiyle değiştirilir;
 sarmalayıcı RNG tüketmez, sonuçları etkilemez.
+
+AUSGRID MODU (--profiles ausgrid): src/experiment.py'nin Ausgrid yolu aynen
+kullanılır: eğitim günleri eğitim senaryoları, değerlendirme 73 test senaryosunun
+hepsi (_run_learner → _evaluate_ausgrid; η = 100·ΣP2P/ΣE_max, senaryo başına
+diziler result.per_scenario altında). "community" 73 senaryonun S / D / E_max
+toplamıdır; enerji dengesi denetimi her test senaryosunda ayrı yapılır ve
+toplanır. Varsayılan çıktı dizini ablation/results_ausgrid. Ölçeğe bağlı sabitler
+(Q kova sınırları, NN normalizasyonu) SimConfig(profile_source="ausgrid")'den gelir;
+varyant ajanları bunları üst sınıf durum kodlayıcıları üzerinden kullanır.
 """
 
 from __future__ import annotations
@@ -26,7 +35,7 @@ import socket
 import sys
 import time
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
 from ablation.variants import (VARIANTS, chdir_repo_root, episodes_for, job_name, REPO_ROOT)
@@ -72,8 +81,21 @@ def _make_progress(every_frac: float):
     return attach
 
 
-def community_for_eval_day(config: SimConfig) -> Dict[str, float]:
-    """src run_job ile aynı: değerlendirme günü (gün seed'i = config.seed) dengesi."""
+def _is_ausgrid(config: SimConfig) -> bool:
+    return getattr(config, "profile_source", "synthetic") == "ausgrid"
+
+
+def community_for_eval_day(config: SimConfig, scenarios: Optional[List[Dict]] = None) -> Dict[str, float]:
+    """src run_job ile aynı: değerlendirme günü (gün seed'i = config.seed) dengesi.
+
+    Ausgrid: 73 değerlendirme senaryosunun S / D / E_max TOPLAMI (src run_job gibi;
+    scenarios verilmezse src.experiment.ausgrid_eval_community ile kurulur).
+    """
+    if _is_ausgrid(config):
+        if scenarios is None:
+            scenarios = sx.ausgrid_eval_community(config)
+        return {k: float(sum(sc[k] for sc in scenarios))
+                for k in ("surplus_kwh", "deficit_kwh", "e_max_kwh")}
     return community_balance(make_profile_manager(config, config.seed), config)
 
 
@@ -87,28 +109,70 @@ def build_env(variant: str, config: SimConfig, hidden: int = 64, n_layers: int =
     return AblationNNEnv(config, state_dim=state_dim, hidden=hidden, n_layers=n_layers)
 
 
+def _record_eval_balance(env, config: SimConfig) -> None:
+    """Ausgrid: env.run_evaluation'ı sarar; her değerlendirme gününden (senaryodan)
+    sonra o günün enerji dengesini env._abl_eval_balances listesine ekler.
+
+    Yalnızca okuma yapar (profiller + metrikler); RNG tüketmez, sonucu değiştirmez.
+    """
+    orig = env.run_evaluation
+    recs: List[Dict] = []
+
+    def run_evaluation_with_balance(seed=None, verbose=True):
+        m = orig(seed=seed, verbose=verbose)
+        recs.append(dict(_balance_one(env, config), seed=int(seed) if seed is not None else None))
+        return m
+
+    env.run_evaluation = run_evaluation_with_balance
+    env._abl_eval_balances = recs
+
+
 def run_variant(variant: str, config: SimConfig, n_episodes: int, e_max: float,
                 hidden: int = 64, n_layers: int = 2,
-                progress_frac: Optional[float] = 0.02) -> Tuple[Dict, object]:
+                progress_frac: Optional[float] = 0.02,
+                scenarios: Optional[List[Dict]] = None) -> Tuple[Dict, object]:
     """seed_everything → ortam → src _run_learner. (sonuç sözlüğü, ortam) döndürür.
 
     NN varyantlarında torch, seed_everything'den ÖNCE içe aktarılır (src run_job gibi),
-    böylece torch RNG'si de tohumlanır.
+    böylece torch RNG'si de tohumlanır. Ausgrid: scenarios (73 test senaryosu,
+    sx.ausgrid_eval_community) _run_learner'a geçirilir (verilmezse orada kurulur);
+    e_max kullanılmaz.
     """
     if VARIANTS[variant]["family"] == "nn":
         import ablation.nn_agents  # noqa: F401  (torch'u yükler)
     seed_everything(config.seed)
     env = build_env(variant, config, hidden=hidden, n_layers=n_layers)
+    if _is_ausgrid(config):
+        _record_eval_balance(env, config)
     if progress_frac:
         with mock.patch.object(sx, "_attach_progress", _make_progress(progress_frac)):
-            res = sx._run_learner(variant, env, config, n_episodes, e_max)
+            res = sx._run_learner(variant, env, config, n_episodes, e_max, scenarios)
     else:
-        res = sx._run_learner(variant, env, config, n_episodes, e_max)
+        res = sx._run_learner(variant, env, config, n_episodes, e_max, scenarios)
     return res, env
 
 
 def balance_check(env, config: SimConfig) -> Dict:
-    """Değerlendirme günü enerji dengesi: D = P2P + şebeke alımı, S = P2P + şebeke satışı."""
+    """Değerlendirme günü enerji dengesi: D = P2P + şebeke alımı, S = P2P + şebeke satışı.
+
+    Ausgrid: 73 test senaryosunun her birinde ayrı denetlenir (_record_eval_balance
+    kayıtları); ok = hepsi tamam, sapmalar senaryolar üzerinden maksimum.
+    """
+    recs = getattr(env, "_abl_eval_balances", None)
+    if _is_ausgrid(config):
+        if not recs:
+            raise RuntimeError("Ausgrid: değerlendirme dengesi kaydı yok (run_variant ile koşulmalı)")
+        bad = [r["seed"] for r in recs if not r["ok"]]
+        return {"ok": not bad,
+                "abs_D_minus_p2p_minus_gridbuy": max(r["abs_D_minus_p2p_minus_gridbuy"] for r in recs),
+                "abs_S_minus_p2p_minus_gridsell": max(r["abs_S_minus_p2p_minus_gridsell"] for r in recs),
+                "rel_tol": BALANCE_REL_TOL, "n_scenarios": len(recs),
+                "n_violations": len(bad), "violating_eval_seeds": bad}
+    return _balance_one(env, config)
+
+
+def _balance_one(env, config: SimConfig) -> Dict:
+    """env'in son koşulan günü (env.profiles + env.metrics) için enerji dengesi."""
     bal = community_balance(env.profiles, config)
     m = env.metrics
     p2p = float(m.total_internal_trading())
@@ -144,19 +208,27 @@ def architecture(variant: str, env) -> Dict:
 
 def run_job(args) -> Dict:
     v = VARIANTS[args.variant]
-    config = SimConfig(n_producers=args.producers, n_consumers=args.consumers, seed=args.seed)
+    config = SimConfig(n_producers=args.producers, n_consumers=args.consumers, seed=args.seed,
+                       profile_source=getattr(args, "profiles", "synthetic"))
+    ausgrid = _is_ausgrid(config)
     if v["family"] == "nn":
         import torch
         torch.set_num_threads(1)   # tek iş parçacığı; ağ çok küçük
     n_ep = episodes_for(args.variant, args.episodes_q, args.episodes_nn)
-    day = community_for_eval_day(config)
+    scens: Optional[List[Dict]] = None
+    if ausgrid:
+        from src.ausgrid_profiles import assert_train_seeds_ok
+        assert_train_seeds_ok(config.seed, n_ep)
+        scens = sx.ausgrid_eval_community(config)     # 73 test senaryosu (src run_job gibi)
+    day = community_for_eval_day(config, scens)
     e_max = day["e_max_kwh"]
 
     _log(f"İŞ başlıyor: {job_name(args.variant, args.producers, args.consumers, args.seed)} "
-         f"| {v['label']} | {n_ep} episode | E_max={e_max:.2f} kWh")
+         f"| {v['label']} | {n_ep} episode | profiller={config.profile_source} | E_max={e_max:.2f} kWh"
+         + (f" ({len(scens)} senaryo toplamı)" if ausgrid else ""))
     t_job = time.perf_counter()
     res, env = run_variant(args.variant, config, n_ep, e_max, hidden=args.nn_hidden,
-                           n_layers=args.nn_layers, progress_frac=args.progress)
+                           n_layers=args.nn_layers, progress_frac=args.progress, scenarios=scens)
     arch = architecture(args.variant, env)
     diag = env.diagnostics() if hasattr(env, "diagnostics") else {}
     if v["family"] == "nn":
@@ -165,6 +237,24 @@ def run_job(args) -> Dict:
     total = time.perf_counter() - t_job
     _log(f"İŞ bitti: toplam {total:.1f}s | η={res['metrics']['efficiency_pct']:.2f}% "
          f"| denge {'OK' if bal['ok'] else 'İHLAL'}")
+
+    extra: Dict = {}
+    if ausgrid:
+        from src.ausgrid_profiles import split_identity
+        extra = {
+            "profile_source": config.profile_source,
+            "ausgrid": split_identity(),
+            "eval_scenarios": {
+                "eval_seed": [sc["seed"] for sc in scens],
+                "day_index": [sc["day"] for sc in scens],
+                "date": [sc["date"] for sc in scens],
+                "producers": [sc["producers"] for sc in scens],
+                "consumers": [sc["consumers"] for sc in scens],
+                "surplus_kwh": [sc["surplus_kwh"] for sc in scens],
+                "deficit_kwh": [sc["deficit_kwh"] for sc in scens],
+                "e_max_kwh": [sc["e_max_kwh"] for sc in scens],
+            },
+        }
 
     return {
         "format": FORMAT,
@@ -192,7 +282,12 @@ def run_job(args) -> Dict:
         "hostname": socket.gethostname(),
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "argv": sys.argv[1:],
+        **extra,
     }
+
+
+def default_out(profiles: str) -> str:
+    return "ablation/results_ausgrid" if profiles == "ausgrid" else "ablation/results"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -206,12 +301,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--nn-hidden", type=int, default=64)
     p.add_argument("--nn-layers", type=int, default=2)
     p.add_argument("--progress", type=float, default=0.02, help="ilerleme satırı sıklığı (kesir)")
-    p.add_argument("--out", default="ablation/results", help="çıktı dizini")
+    p.add_argument("--profiles", choices=["synthetic", "ausgrid"], default="synthetic",
+                   help="Profil kaynağı (varsayılan: synthetic = eski davranış)")
+    p.add_argument("--out", default=None,
+                   help="çıktı dizini (varsayılan ablation/results; --profiles ausgrid ile "
+                        "ablation/results_ausgrid)")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.out is None:
+        args.out = default_out(args.profiles)
     out_dir = args.out if os.path.isabs(args.out) else os.path.join(REPO_ROOT, args.out)
     path = os.path.join(out_dir, job_name(args.variant, args.producers, args.consumers, args.seed) + ".json")
     data = run_job(args)
