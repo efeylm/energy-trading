@@ -451,6 +451,14 @@ def main(argv: List[str]) -> int:
     if runs:
         hosts = sorted({r.get("hostname", "?") for r in runs})
         sections.append(f"  Makine(ler): {', '.join(hosts)}")
+        # Profil kaynağı (eski JSON'larda alan yok → synthetic). Ausgrid'de metrikler
+        # 73 değerlendirme senaryosunun toplamıdır (bkz. src/experiment.py).
+        sources = sorted({r.get("profile_source", "synthetic") for r in runs})
+        splits = sorted({r["ausgrid"]["split_id"] for r in runs if "ausgrid" in r})
+        sections.append(f"  Profil kaynağı: {', '.join(sources)}"
+                        + (f" | Ausgrid split_id: {', '.join(splits)}" if splits else ""))
+        if len(sources) > 1 or len(splits) > 1:
+            sections.append("  [UYARI] Dizinde farklı profil kaynakları / bölünmeler karışık!")
         sections += ["", "### 1. DENEY A — POPÜLASYON BOYUTU"] + table_a(runs)
         sections += ["", "### 2. POPÜLASYONLAR ARASI KARŞILAŞTIRMA (Deney A)"] + table_cross(runs)
         sections += ["", "### 3. DENEY B — DERİN AĞ"] + table_b(runs)

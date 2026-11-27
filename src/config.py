@@ -9,6 +9,10 @@ Combines parameters from:
 
 from dataclasses import dataclass
 
+# Sentetik profillerin miktar ölçeği için eski sabitler (bkz. SimConfig alanları).
+_SYN_EDGES = (0.0, 1.0, 3.0, 6.0, 20.0)
+_SYN_NORM = 10.0
+
 
 @dataclass
 class SimConfig:
@@ -75,6 +79,47 @@ class SimConfig:
     # Üretici ajanların (indeks < n_producers) PV profili bu katsayıyla
     # çarpılır; tüketiciler etkilenmez. 1.0 (varsayılan) = hiçbir değişiklik yok.
     supply_multiplier: float = 1.0
+
+    # =====================================================================
+    # PROFİL KAYNAĞI ve MİKTAR ÖLÇEĞİNE BAĞLI SABİTLER
+    # =====================================================================
+    # "synthetic" (varsayılan): src/profiles.py ProfileManager — eski davranış.
+    # "ausgrid"              : src/ausgrid_profiles.py AusgridProfileManager —
+    #                          gerçek Ausgrid ev verisi (slot başına kWh).
+    # Profil yöneticisi src.profiles.make_profile_manager() ile kurulur.
+    profile_source: str = "synthetic"
+
+    # Q-Learning durum kovaları (src/ql_agent.py): satıcı fazlası / alıcı açığı
+    # sınırları (kWh), 5 değer → 4 kova. Varsayılanlar eski sabit PV_EDGES /
+    # DEMAND_EDGES = [0, 1, 3, 6, 20] ile birebir aynıdır.
+    q_surplus_edges: tuple = (0.0, 1.0, 3.0, 6.0, 20.0)
+    q_deficit_edges: tuple = (0.0, 1.0, 3.0, 6.0, 20.0)
+    # REINFORCE girdi normalizasyonu (src/reinforce_agent.py):
+    # supply_norm = min(fazla / nn_surplus_norm, 1), deficit_norm = min(açık / nn_deficit_norm, 1).
+    # Varsayılan 10.0 = eski sabit "/ 10.0".
+    nn_surplus_norm: float = 10.0
+    nn_deficit_norm: float = 10.0
+
+    def __post_init__(self):
+        if self.profile_source not in ("synthetic", "ausgrid"):
+            raise ValueError(f"profile_source 'synthetic' veya 'ausgrid' olmalı: {self.profile_source!r}")
+        if len(self.q_surplus_edges) != 5 or len(self.q_deficit_edges) != 5:
+            raise ValueError("q_surplus_edges / q_deficit_edges 5 değer (4 kova) olmalı")
+        # Ausgrid modunda ölçek sabitleri hâlâ sentetik varsayılanlardaysa
+        # data/ausgrid/split.json'daki (yalnızca eğitim verisinden hesaplanmış)
+        # değerlerle doldurulur. Böylece SimConfig(profile_source="ausgrid") kuran
+        # her koşucu (ablation/, shock_lab/ dahil) doğru ölçeği kendiliğinden alır.
+        # Açıkça verilmiş (varsayılandan farklı) değerlere dokunulmaz;
+        # dataclasses.replace() da zaten doldurulmuş değerleri korur.
+        if self.profile_source == "ausgrid" and (
+            tuple(self.q_surplus_edges) == _SYN_EDGES
+            and tuple(self.q_deficit_edges) == _SYN_EDGES
+            and self.nn_surplus_norm == _SYN_NORM
+            and self.nn_deficit_norm == _SYN_NORM
+        ):
+            from src.ausgrid_profiles import ausgrid_scales
+            for k, v in ausgrid_scales().items():
+                setattr(self, k, v)
 
     @property
     def n_agents(self) -> int:

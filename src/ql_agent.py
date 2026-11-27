@@ -56,25 +56,28 @@ def _hour_bucket(hour_step: int) -> int:
 
 # PV üretim seviyeleri: 4 kova
 # Negatif net_load = fazla üretim (PV fazlası)
+# Varsayılan sınırlar; çalışma anında ajan SimConfig.q_surplus_edges'i kullanır
+# (varsayılanı bu diziyle birebir aynıdır; Ausgrid modunda veriden gelir).
 PV_EDGES = np.array([0.0, 1.0, 3.0, 6.0, 20.0])   # 4 bin: [0,1), [1,3), [3,6), [6,+)
 
-def _pv_bucket(surplus_kwh: float) -> int:
+def _pv_bucket(surplus_kwh: float, edges: np.ndarray = PV_EDGES) -> int:
     """
     PV fazlası (kWh) değerini 4 kovaya ayırır.
     surplus_kwh = abs(inflexible_load) when net_load < 0
     """
-    return int(np.clip(np.searchsorted(PV_EDGES, surplus_kwh, side="right") - 1, 0, len(PV_EDGES) - 2))
+    return int(np.clip(np.searchsorted(edges, surplus_kwh, side="right") - 1, 0, len(edges) - 2))
 
 
 # Alıcı talep seviyeleri: 4 kova (satıcının pv_bucket'ıyla simetrik)
+# Varsayılan sınırlar; çalışma anında ajan SimConfig.q_deficit_edges'i kullanır.
 DEMAND_EDGES = np.array([0.0, 1.0, 3.0, 6.0, 20.0])  # 4 bin: [0,1), [1,3), [3,6), [6,+)
 
-def _demand_bucket(deficit_kwh: float) -> int:
+def _demand_bucket(deficit_kwh: float, edges: np.ndarray = DEMAND_EDGES) -> int:
     """
     Alıcı talebi (kWh) değerini 4 kovaya ayırır.
     deficit_kwh = inflexible_load when net_load > 0
     """
-    return int(np.clip(np.searchsorted(DEMAND_EDGES, deficit_kwh, side="right") - 1, 0, len(DEMAND_EDGES) - 2))
+    return int(np.clip(np.searchsorted(edges, deficit_kwh, side="right") - 1, 0, len(edges) - 2))
 
 
 N_HOUR_BUCKETS   = 3   # ToU dönemi sayısı
@@ -135,6 +138,13 @@ class QLearningAgent(EnergyAgent):
         self.fit_price: float = config.fit_price
         self.tou_price: float = config.tou_price
 
+        # Durum kovası sınırları (config'den; varsayılan = eski PV_EDGES / DEMAND_EDGES).
+        # float64 dizi: searchsorted sonuçları eski sabit dizilerle birebir aynıdır.
+        self._surplus_edges = np.array(config.q_surplus_edges, dtype=np.float64)
+        self._deficit_edges = np.array(config.q_deficit_edges, dtype=np.float64)
+        assert len(self._surplus_edges) - 1 == N_PV_BUCKETS
+        assert len(self._deficit_edges) - 1 == N_DEMAND_BUCKETS
+
         # Satıcı Q-tablosu: shape (N_HOUR_BUCKETS, N_PV_BUCKETS, N_ACTIONS)
         self.q_table: np.ndarray = np.zeros(
             (N_HOUR_BUCKETS, N_PV_BUCKETS, N_ACTIONS), dtype=np.float64
@@ -164,14 +174,14 @@ class QLearningAgent(EnergyAgent):
         """Satıcı: (saat_bucket, pv_bucket)"""
         s0 = _hour_bucket(obs.hour)
         surplus = max(0.0, -obs.inflexible_load)
-        s1 = _pv_bucket(surplus)
+        s1 = _pv_bucket(surplus, self._surplus_edges)
         return s0, s1
 
     def _encode_buyer_state(self, obs: Observation) -> Tuple[int, int]:
         """Alıcı: (saat_bucket, demand_bucket)"""
         s0 = _hour_bucket(obs.hour)
         deficit = max(0.0, obs.inflexible_load)
-        s1 = _demand_bucket(deficit)
+        s1 = _demand_bucket(deficit, self._deficit_edges)
         return s0, s1
 
     # ------------------------------------------------------------------

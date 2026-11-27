@@ -15,6 +15,14 @@ Kullanım:
     python -m src.run_experiments --only A --dry-run      # yalnızca A'yı listele
     python -m src.run_experiments --smoke --workers 4     # küçük deneme → results_smoke/
 
+Ausgrid (gerçek veri) modu — sonuçlar ayrı dizine, eski results/ dokunulmaz:
+    python -m src.run_experiments --profiles ausgrid --pilot --dry-run
+    python -m src.run_experiments --profiles ausgrid --pilot --workers 6 --out results_ausgrid
+  --pilot: 4+4 ve 10+10, seed 1..3, random + Q-Learning (3000) + REINFORCE (7000)
+  → 6 iş (grup etiketi A; özetleyici onları Deney A tablosunda gösterir).
+  Ausgrid modunda random baseline senaryo başına 20 çekiliştir (73 senaryo) ve
+  veri önbelleği işçiler başlamadan ana süreçte kurulur.
+
 Her iş: sys.executable -m src.experiment ... (OMP/MKL/OPENBLAS_NUM_THREADS=1).
 Çıktı: <out_dir>/<iş adı>.json ve <out_dir>/logs/<iş adı>.log.
 Devam ettirilebilir: JSON'u zaten olan iş atlanır. Başarısız iş diğerlerini
@@ -46,6 +54,14 @@ FULL = dict(pops=POPULATIONS, seeds_a=[1, 2, 3, 4, 5], seeds_b=[1, 2, 3], seeds_
 SMOKE = dict(pops=[(4, 4), (10, 20)], seeds_a=[1], seeds_b=[1], seeds_c=[1],
              ql=4, nn=4, draws=5, conv_ql=8, conv_nn=8, conv_pop=(10, 20),
              out_dir="results_smoke")
+# Pilot (Ausgrid için düşünüldü): yalnızca Deney A yapısı, 4+4 ve 10+10, seed 1..3,
+# makale bütçeleri → 6 iş. B ve C yok (seeds_b / seeds_c boş).
+PILOT = dict(pops=[(4, 4), (10, 10)], seeds_a=[1, 2, 3], seeds_b=[], seeds_c=[],
+             ql=3000, nn=7000, draws=200, conv_ql=6000, conv_nn=14000, conv_pop=CONV_POP,
+             out_dir="results_pilot")
+# Ausgrid modunda random baseline: 73 değerlendirme senaryosunun her birinde bu kadar
+# fiyat çekilişi (sentetikteki tek gün × 200 yerine). Smoke planı kendi küçük değerini korur.
+AUSGRID_DRAWS = 20
 
 
 @dataclass
@@ -60,6 +76,7 @@ class Job:
     nn_episodes: int
     nn_layers: int
     draws: int
+    profiles: str = "synthetic"
 
     def cost(self) -> float:
         """Göreli süre tahmini (yalnızca sıralama için): ajan × episode, NN ağırlıklı."""
@@ -81,6 +98,7 @@ class Job:
             "--episodes", str(self.episodes), "--nn_episodes", str(self.nn_episodes),
             "--nn_layers", str(self.nn_layers), "--baseline_draws", str(self.draws),
             "--out", out_path, "--tag", self.group,
+            "--profiles", self.profiles,
         ]
 
 
@@ -88,7 +106,8 @@ def _pop(p: int, c: int) -> str:
     return f"p{p}c{c}"
 
 
-def build_jobs(plan: Dict, only: Optional[List[str]] = None) -> List[Job]:
+def build_jobs(plan: Dict, only: Optional[List[str]] = None,
+               profiles: str = "synthetic") -> List[Job]:
     jobs: List[Job] = []
     for p, c in plan["pops"]:
         for s in plan["seeds_a"]:
@@ -103,6 +122,8 @@ def build_jobs(plan: Dict, only: Optional[List[str]] = None) -> List[Job]:
     for s in plan["seeds_c"]:
         jobs.append(Job("C", f"C_{_pop(p, c)}_x2_seed{s}", p, c, s, "ql,nn",
                         plan["conv_ql"], plan["conv_nn"], 2, plan["draws"]))
+    for j in jobs:
+        j.profiles = profiles
     if only:
         jobs = [j for j in jobs if j.group in only]
     # En uzun işler önce (büyük popülasyon / büyük bütçe); eşitlikte ada göre.
@@ -139,18 +160,34 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Deney planını paralel çalıştır (A, B, C)")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                     help="Aynı anda çalışan iş sayısı (varsayılan: CPU sayısının yarısı)")
-    ap.add_argument("--out_dir", type=str, default=None,
-                    help="Çıktı dizini (varsayılan: results/, --smoke ile results_smoke/)")
+    ap.add_argument("--out_dir", "--out", dest="out_dir", type=str, default=None,
+                    help="Çıktı dizini (varsayılan: results/, --smoke ile results_smoke/, "
+                         "--pilot ile results_pilot/; --profiles ausgrid ile results_ausgrid/ "
+                         "veya --smoke ile results_ausgrid_smoke/)")
     ap.add_argument("--only", action="append", default=None,
                     help="Yalnızca bu gruplar: A, B, C (tekrarlanabilir veya virgüllü)")
     ap.add_argument("--dry-run", action="store_true", help="İşleri listele, çalıştırma")
     ap.add_argument("--smoke", action="store_true", help="Küçük bütçeli deneme planı")
+    ap.add_argument("--pilot", action="store_true",
+                    help="Pilot plan: 4+4 ve 10+10, seed 1..3, A yapısı, makale bütçeleri (6 iş)")
+    ap.add_argument("--profiles", choices=["synthetic", "ausgrid"], default="synthetic",
+                    help="Profil kaynağı (varsayılan: synthetic = eski davranış)")
     args = ap.parse_args()
 
-    plan = SMOKE if args.smoke else FULL
-    out_dir = os.path.abspath(args.out_dir or os.path.join(REPO_ROOT, plan["out_dir"]))
+    if args.smoke and args.pilot:
+        raise SystemExit("--smoke ve --pilot birlikte kullanılamaz")
+    plan = dict(SMOKE if args.smoke else PILOT if args.pilot else FULL)
+    if args.profiles == "ausgrid":
+        if not args.smoke:
+            plan["draws"] = AUSGRID_DRAWS
+        # Pilot işleri tam planın A işlerinin alt kümesidir (aynı ad, bütçe, çekiliş);
+        # aynı dizini paylaşırlar, sonradan koşulan tam plan onları atlar.
+        default_dir = "results_ausgrid_smoke" if args.smoke else "results_ausgrid"
+    else:
+        default_dir = plan["out_dir"]
+    out_dir = os.path.abspath(args.out_dir or os.path.join(REPO_ROOT, default_dir))
     log_dir = os.path.join(out_dir, "logs")
-    jobs = build_jobs(plan, _parse_only(args.only))
+    jobs = build_jobs(plan, _parse_only(args.only), profiles=args.profiles)
     workers = max(1, args.workers)
     total = len(jobs)
 
@@ -158,13 +195,22 @@ def main() -> int:
         return os.path.join(out_dir, j.name + ".json")
 
     if args.dry_run:
-        print(f"{total} iş → {out_dir}  (workers={workers})")
+        print(f"{total} iş → {out_dir}  (workers={workers}, profiller={args.profiles})")
         for i, j in enumerate(jobs, 1):
             state = "VAR (atlanacak)" if os.path.exists(out_path(j)) else "bekliyor"
             print(f"  {i:3d}. {j.name:<26} {j.producers:>2}+{j.consumers:<2} seed={j.seed} "
                   f"methods={j.methods:<12} ql={j.episodes:<5} nn={j.nn_episodes:<5} "
                   f"L={j.nn_layers} draws={j.draws:<4} [{state}]")
+        if jobs:
+            print("  komut örneği: " + " ".join(jobs[0].argv(out_path(jobs[0]))[1:]))
         return 0
+
+    if args.profiles == "ausgrid":
+        # Veri önbelleğini ve bölünmeyi işçilerden ÖNCE burada kur: işçiler yalnızca okur.
+        from src.ausgrid_profiles import ensure_cache, load_split
+        ensure_cache()
+        sp = load_split()
+        print(f"Ausgrid önbelleği hazır; split_id={sp['split_id']}", flush=True)
 
     os.makedirs(log_dir, exist_ok=True)
     env = dict(os.environ, OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1",

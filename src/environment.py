@@ -27,7 +27,7 @@ import numpy as np
 from src.config import SimConfig
 from src.agent import EnergyAgent, Observation, Action
 from src.market import Order, PartialMatchDoubleAuction, PartialClearingResult
-from src.profiles import ProfileManager
+from src.profiles import ProfileManager, make_profile_manager
 from src.metrics import MetricsCollector, HourlyMetrics
 
 
@@ -58,16 +58,8 @@ class EnergyTradingEnv:
         """
         actual_seed = seed if seed is not None else self.config.seed
         
-        # Generate daily profiles
-        self.profiles = ProfileManager(
-            n_producers=self.config.n_producers,
-            n_consumers=self.config.n_consumers,
-            seed=actual_seed,
-            # Yalnızca talep şoku deneyi için; varsayılan 1.0 = değişiklik yok.
-            demand_multiplier=getattr(self.config, "demand_multiplier", 1.0),
-            # Yalnızca arz şoku deneyi için; varsayılan 1.0 = değişiklik yok.
-            supply_multiplier=getattr(self.config, "supply_multiplier", 1.0),
-        )
+        # Generate daily profiles (config.profile_source'a göre; bkz. _make_profiles)
+        self.profiles = self._make_profiles(actual_seed)
         
         # Create agents
         self.agents = []
@@ -91,6 +83,14 @@ class EnergyTradingEnv:
         
         return self._get_all_observations()
     
+    def _make_profiles(self, seed: int) -> ProfileManager:
+        """Günün profil yöneticisi (alt sınıflar geçersiz kılabilir).
+
+        Sentetik (varsayılan) ya da Ausgrid — seçim config.profile_source'tan,
+        kurulum src.profiles.make_profile_manager'dan yapılır.
+        """
+        return make_profile_manager(self.config, seed)
+
     def _get_all_observations(self) -> Dict[int, Observation]:
         """Generate observations for all agents at current hour.
 

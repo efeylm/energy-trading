@@ -181,3 +181,8 @@ cython_debug/
 .cursorindexingignore
 # Deney smoke testi çıktıları (src/run_experiments.py --smoke)
 results_smoke/
+# Ausgrid ham verisinin ayrıştırılmış önbelleği (src/ausgrid_profiles.py ensure_cache)
+data/ausgrid/*_cache.npz
+data/ausgrid/*.tmp.*
+# Ausgrid smoke testi çıktıları (src/run_experiments.py --profiles ausgrid --smoke)
+results_ausgrid_smoke/

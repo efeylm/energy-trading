@@ -35,7 +35,7 @@ chdir_repo_root()
 
 import src.experiment as sx                                    # noqa: E402
 from src.config import SimConfig                               # noqa: E402
-from src.profiles import ProfileManager                        # noqa: E402
+from src.profiles import make_profile_manager                  # noqa: E402
 from src.random_environment import community_balance           # noqa: E402
 from src.seeding import seed_everything                        # noqa: E402
 
@@ -74,10 +74,7 @@ def _make_progress(every_frac: float):
 
 def community_for_eval_day(config: SimConfig) -> Dict[str, float]:
     """src run_job ile aynı: değerlendirme günü (gün seed'i = config.seed) dengesi."""
-    return community_balance(
-        ProfileManager(config.n_producers, config.n_consumers, seed=config.seed,
-                       demand_multiplier=config.demand_multiplier,
-                       supply_multiplier=config.supply_multiplier), config)
+    return community_balance(make_profile_manager(config, config.seed), config)
 
 
 def build_env(variant: str, config: SimConfig, hidden: int = 64, n_layers: int = 2):

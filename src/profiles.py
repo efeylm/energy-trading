@@ -209,3 +209,30 @@ class ProfileManager:
                 f"Net={total_pv - total_load:.1f}kWh"
             )
         return "\n".join(lines)
+
+
+def make_profile_manager(config, seed: int) -> ProfileManager:
+    """Bir günün profil yöneticisi — config.profile_source'a göre TEK kurulum noktası.
+
+    EnergyTradingEnv.reset(), src/experiment.py ve ablation/run_job.py profilleri
+    buradan kurar. "synthetic" (varsayılan) dalı eskiden doğrudan yapılan
+    ProfileManager(...) çağrısının birebir aynısıdır (aynı argümanlar, aynı RNG).
+    "ausgrid" dalı gerçek veriyi kullanır (src/ausgrid_profiles.py; içe aktarma
+    yalnızca bu dalda yapılır).
+    """
+    source = getattr(config, "profile_source", "synthetic")
+    kwargs = dict(
+        n_producers=config.n_producers,
+        n_consumers=config.n_consumers,
+        seed=seed,
+        # Yalnızca talep şoku deneyi için; varsayılan 1.0 = değişiklik yok.
+        demand_multiplier=getattr(config, "demand_multiplier", 1.0),
+        # Yalnızca arz şoku deneyi için; varsayılan 1.0 = değişiklik yok.
+        supply_multiplier=getattr(config, "supply_multiplier", 1.0),
+    )
+    if source == "synthetic":
+        return ProfileManager(**kwargs)
+    if source == "ausgrid":
+        from src.ausgrid_profiles import AusgridProfileManager
+        return AusgridProfileManager(**kwargs)
+    raise ValueError(f"Bilinmeyen profile_source: {source!r}")

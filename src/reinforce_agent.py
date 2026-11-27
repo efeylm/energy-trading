@@ -264,7 +264,7 @@ class REINFORCEAgent(EnergyAgent):
         """Satıcı: 3-boyutlu normalize state — [hour, surplus, avg_price]."""
         hour_norm   = obs.hour / 47.0
         surplus     = max(0.0, -obs.inflexible_load)
-        supply_norm = min(surplus / 10.0, 1.0)
+        supply_norm = min(surplus / self.config.nn_surplus_norm, 1.0)   # varsayılan 10.0
         avg_price_n = min(obs.last_avg_price / 0.5, 1.0)
         return torch.tensor(
             [hour_norm, supply_norm, avg_price_n],
@@ -275,7 +275,7 @@ class REINFORCEAgent(EnergyAgent):
         """Alıcı: 3-boyutlu normalize state — [hour, deficit, avg_price]."""
         hour_norm    = obs.hour / 47.0
         deficit      = max(0.0, obs.inflexible_load)
-        deficit_norm = min(deficit / 10.0, 1.0)
+        deficit_norm = min(deficit / self.config.nn_deficit_norm, 1.0)   # varsayılan 10.0
         avg_price_n  = min(obs.last_avg_price / 0.5, 1.0)
         return torch.tensor(
             [hour_norm, deficit_norm, avg_price_n],
