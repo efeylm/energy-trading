@@ -1,0 +1,37 @@
+====================================================================================
+DEMAND SHOCK — Q-Learning 10+10, seed 5
+  profiles: Ausgrid real data; training episodes = Ausgrid TRAIN scenarios (split 1d6e8ae374db); D, S, E_max per episode from that episode's own scenario
+  phases: 1: equilibrium x1, episodes 1-6000 | 2: demand shock x2, episodes 6001-11000 | 3: recovery x1, episodes 11001-16000
+  QL: alpha=0.1 gamma=0.95 eps=1.0->0.05 decay=0.985 eps_reset=0.5
+  values: mean of the last 500 training episodes of each phase (exploration on)
+------------------------------------------------------------------------------------
+  Metric                                P1 5501-6000  P2 10501-11000  P3 15501-16000
+------------------------------------------------------------------------------------
+  Avg. clearing price ($/kWh)                 0.1748          0.1895          0.1761
+  Community demand D (kWh/day)                322.44          492.30          325.08
+  Community supply S (kWh/day)                 47.04           46.20           44.45
+  Feasible maximum E_max (kWh/day)             34.97           42.99           33.34
+  P2P volume (kWh/day)                         29.07           36.21           26.74
+  Unmet by P2P = grid buy (kWh/day)           293.37          456.08          298.34
+  Grid sale at FiT (kWh/day)                   17.97            9.99           17.71
+  System reward                               -80.13         -125.76          -81.60
+  Epsilon                                      0.050           0.050           0.050
+------------------------------------------------------------------------------------
+  energy balance check: max |D - P2P - grid buy| = 4.55e-13 kWh, violations = 0
+====================================================================================
+HELD-OUT EVALUATION — Q-tables frozen at the end of each phase, greedy (eps=0), 73 Ausgrid test scenarios
+  each column: that phase's multiplier applied to the test scenarios; energies / $ summed over the 73 scenarios, eta = 100*sum(P2P)/sum(E_max), price volume-weighted
+------------------------------------------------------------------------------------
+  Metric                                   P1 end x1       P2 end x2       P3 end x1
+------------------------------------------------------------------------------------
+  Community demand D (kWh, sum)             25033.15        38324.94        25033.15
+  Community supply S (kWh, sum)              4635.72         4635.72         4635.72
+  Feasible maximum E_max (kWh, sum)          3104.06         4142.34         3104.06
+  P2P volume (kWh, sum)                      2557.00         3526.09         2530.02
+  Efficiency eta = P2P/E_max (%)               82.38           85.12           81.51
+  Avg. clearing price ($/kWh)                 0.1658          0.1758          0.1570
+  Unmet by P2P = grid buy (kWh, sum)        22476.14        34798.85        22503.13
+  Grid sale at FiT (kWh, sum)                2078.71         1109.63         2105.70
+  Buyer cost ($, sum)                        3462.75         7084.86         3464.79
+  Seller revenue ($, sum)                     548.70          686.49          523.50
+====================================================================================
