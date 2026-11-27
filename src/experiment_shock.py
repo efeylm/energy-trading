@@ -13,6 +13,10 @@ kesintisiz eğitim.
 Aşağıdaki açıklama talep şoku içindir; arz şokunda tek fark çarpanın hangi
 profile uygulandığıdır. JSON'daki "shock" alanı türü kaydeder (eski
 JSON'larda yoksa "demand" kabul edilir).
+Seed 1 dışındaki seed'lerde özet ve grafik adlarına uzantıdan önce "_seed{S}"
+eklenir (shock_summary_seed2.txt, fig_shock_panels_seed2.png, ...), böylece
+seed'ler birbirinin üzerine yazmaz; seed 1'in adları değişmez. Çok seed'li
+özet: python -m src.summarize_shock <dizin>.
 
 Üç faz, Q-tabloları fazlar arasında KORUNUR (aynı QLearningEnv nesnesi):
     Faz 1 (denge)      : --p1 episode, tüketici yük çarpanı 1.0
@@ -111,6 +115,16 @@ def _prefix(shock: str) -> str:
 
 def _json_name(p: int, c: int, seed: int, shock: str = "demand") -> str:
     return f"{_prefix(shock)}shock_p{p}c{c}_seed{seed}.json"
+
+
+def _seeded(fname: str, seed: int) -> str:
+    """Özet / grafik dosya adı: seed 1 için aynen (makale ve mevcut dosyalar bu adlara
+    atıf yapar); diğer seed'lerde uzantıdan önce "_seed{S}" (birbirinin üzerine yazmasın).
+    Örn. shock_summary.txt -> shock_summary_seed2.txt."""
+    if int(seed) == 1:
+        return fname
+    stem, ext = os.path.splitext(fname)
+    return f"{stem}_seed{int(seed)}{ext}"
 
 
 def _shock_of(data: Dict) -> str:
@@ -370,21 +384,26 @@ def summarize(series: Dict[str, List[float]], phases: List[Dict]) -> Dict:
     return out
 
 
+# Eğitim özet tablosunun satırları (son SUMMARY_TAIL episode ortalaması);
+# src/summarize_shock.py de kullanır.
+TRAIN_ROWS = [
+    ("avg_price", "Avg. clearing price ($/kWh)", "{:.4f}"),
+    ("demand_kwh", "Community demand D (kWh/day)", "{:.2f}"),
+    ("supply_kwh", "Community supply S (kWh/day)", "{:.2f}"),
+    ("e_max_kwh", "Feasible maximum E_max (kWh/day)", "{:.2f}"),
+    ("p2p_kwh", "P2P volume (kWh/day)", "{:.2f}"),
+    ("unmet_kwh", "Unmet by P2P = grid buy (kWh/day)", "{:.2f}"),
+    ("grid_sold_kwh", "Grid sale at FiT (kWh/day)", "{:.2f}"),
+    ("system_reward", "System reward", "{:.2f}"),
+    ("epsilon", "Epsilon", "{:.3f}"),
+]
+
+
 def format_summary(data: Dict) -> str:
     phases = data["phases"]
     s = data["summary"]
     cols = [f"phase{ph['phase']}" for ph in phases if f"phase{ph['phase']}" in s]
-    rows = [
-        ("avg_price", "Avg. clearing price ($/kWh)", "{:.4f}"),
-        ("demand_kwh", "Community demand D (kWh/day)", "{:.2f}"),
-        ("supply_kwh", "Community supply S (kWh/day)", "{:.2f}"),
-        ("e_max_kwh", "Feasible maximum E_max (kWh/day)", "{:.2f}"),
-        ("p2p_kwh", "P2P volume (kWh/day)", "{:.2f}"),
-        ("unmet_kwh", "Unmet by P2P = grid buy (kWh/day)", "{:.2f}"),
-        ("grid_sold_kwh", "Grid sale at FiT (kWh/day)", "{:.2f}"),
-        ("system_reward", "System reward", "{:.2f}"),
-        ("epsilon", "Epsilon", "{:.3f}"),
-    ]
+    rows = TRAIN_ROWS
     hp = data["ql_hyperparameters"]
     width = 36 + 16 * len(cols)
     lines = [
@@ -540,7 +559,7 @@ def plot_all(data: Dict, out_dir: str) -> List[str]:
         ax.legend(handles=series_handles, loc="lower center", bbox_to_anchor=(0.5, 1.01),
                   ncol=len(series_handles), frameon=False, handlelength=2.0,
                   columnspacing=1.4, borderaxespad=0.0)
-        path = os.path.join(out_dir, fname)
+        path = os.path.join(out_dir, _seeded(fname, data["seed"]))
         fig.savefig(path, dpi=300, bbox_inches="tight", pad_inches=0.03)
         plt.close(fig)
         return path
@@ -599,7 +618,7 @@ def plot_all(data: Dict, out_dir: str) -> List[str]:
     ], pre + "fig_shock_unmet_demand.png"))
 
     # 5) Tek sütunluk birleşik şekil: (a) D,S  (b) fiyat  (c) P2P + E_max  (d) şebeke alımı
-    paths.append(plot_panels(data, out_dir, pre + "fig_shock_panels.png",
+    paths.append(plot_panels(data, out_dir, _seeded(pre + "fig_shock_panels.png", data["seed"]),
                              S, x, n, ma, phases, raw_kw))
 
     return paths
@@ -738,7 +757,8 @@ def dry_run(args, json_path: str) -> None:
           f"profiller={args.profiles} | fazlar {args.p1}/{args.p2}/{args.p3} "
           f"(toplam {n_total} episode) | çarpan ×{args.mult} | ε reset {args.eps_reset}")
     print(f"  JSON  : {json_path}")
-    print(f"  özet  : {os.path.join(args.out, _prefix(args.shock) + 'shock_summary.txt')}")
+    print(f"  özet  : {os.path.join(args.out, _seeded(_prefix(args.shock) + 'shock_summary.txt', args.seed))}")
+    print(f"  grafik: {os.path.join(args.out, _seeded(_prefix(args.shock) + 'fig_shock_*.png', args.seed))}")
     print(f"  JSON {'VAR (üzerine yazılır)' if os.path.exists(json_path) else 'yok'}")
     if args.profiles == "ausgrid":
         from src.ausgrid_profiles import assert_train_seeds_ok, split_identity
@@ -788,7 +808,8 @@ def main(argv=None) -> None:
         _log(f"JSON yazıldı: {json_path}")
 
     table = format_summary(data)
-    with open(os.path.join(args.out, _prefix(_shock_of(data)) + "shock_summary.txt"), "w", encoding="utf-8") as f:
+    summary_name = _seeded(_prefix(_shock_of(data)) + "shock_summary.txt", data["seed"])
+    with open(os.path.join(args.out, summary_name), "w", encoding="utf-8") as f:
         f.write(table + "\n")
     for path in plot_all(data, args.out):
         _log(f"grafik: {path}")
